@@ -1,0 +1,124 @@
+workflows:
+  android-debug-workflow:
+    name: LedgerMate Android Debug Workflow
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      java: 21
+      vars:
+        PACKAGE_NAME: "com.aistudio.ledgermate.app"
+    triggering:
+      events:
+        - push
+        - pull_request
+      branch_patterns:
+        - pattern: "*"
+          include: true
+          source: true
+    scripts:
+      - name: Set up local.properties and environment files
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          if [ ! -f "$CM_BUILD_DIR/.env" ]; then
+            if [ -f "$CM_BUILD_DIR/.env.example" ]; then
+              cp "$CM_BUILD_DIR/.env.example" "$CM_BUILD_DIR/.env"
+            else
+              touch "$CM_BUILD_DIR/.env"
+            fi
+          fi
+      - name: Setup Gradle 9.3.1 & Repair Wrapper Jar
+        script: |
+          GRADLE_VERSION="9.3.1"
+          echo "Installing Gradle ${GRADLE_VERSION} and repairing gradle-wrapper.jar..."
+          curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
+          unzip -q -o /tmp/gradle.zip -d /tmp
+          export PATH="/tmp/gradle-${GRADLE_VERSION}/bin:$PATH"
+          echo "/tmp/gradle-${GRADLE_VERSION}/bin" >> $CM_PATH
+          rm -f "$CM_BUILD_DIR/gradle/wrapper/gradle-wrapper.jar"
+          gradle wrapper --gradle-version "${GRADLE_VERSION}"
+          chmod +x gradlew
+      - name: Prepare debug keystore
+        script: |
+          rm -f "$CM_BUILD_DIR/debug.keystore"
+          if [ -f "$CM_BUILD_DIR/debug.keystore.base64" ]; then
+            base64 --decode "$CM_BUILD_DIR/debug.keystore.base64" > "$CM_BUILD_DIR/debug.keystore" || true
+          fi
+          if [ ! -s "$CM_BUILD_DIR/debug.keystore" ]; then
+            rm -f "$CM_BUILD_DIR/debug.keystore"
+            keytool -genkeypair -v \
+              -keystore "$CM_BUILD_DIR/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+      - name: Run unit tests
+        script: |
+          ./gradlew testDebugUnitTest --stacktrace --no-daemon
+      - name: Build Debug APK
+        script: |
+          ./gradlew assembleDebug --stacktrace --no-daemon
+    artifacts:
+      - app/build/outputs/**/*.apk
+      - app/build/reports/tests/testDebugUnitTest/**
+
+  android-release-workflow:
+    name: LedgerMate Android Release Workflow
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      java: 21
+      vars:
+        PACKAGE_NAME: "com.aistudio.ledgermate.app"
+    scripts:
+      - name: Set up local.properties and environment files
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          if [ ! -f "$CM_BUILD_DIR/.env" ]; then
+            if [ -f "$CM_BUILD_DIR/.env.example" ]; then
+              cp "$CM_BUILD_DIR/.env.example" "$CM_BUILD_DIR/.env"
+            else
+              touch "$CM_BUILD_DIR/.env"
+            fi
+          fi
+      - name: Setup Gradle 9.3.1 & Repair Wrapper Jar
+        script: |
+          GRADLE_VERSION="9.3.1"
+          echo "Installing Gradle ${GRADLE_VERSION} and repairing gradle-wrapper.jar..."
+          curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
+          unzip -q -o /tmp/gradle.zip -d /tmp
+          export PATH="/tmp/gradle-${GRADLE_VERSION}/bin:$PATH"
+          echo "/tmp/gradle-${GRADLE_VERSION}/bin" >> $CM_PATH
+          rm -f "$CM_BUILD_DIR/gradle/wrapper/gradle-wrapper.jar"
+          gradle wrapper --gradle-version "${GRADLE_VERSION}"
+          chmod +x gradlew
+      - name: Prepare release signing keystore
+        script: |
+          if [ -n "$CM_KEYSTORE" ]; then
+            echo "$CM_KEYSTORE" | base64 --decode > "$CM_BUILD_DIR/my-upload-key.jks"
+            export KEYSTORE_PATH="$CM_BUILD_DIR/my-upload-key.jks"
+          elif [ ! -f "$CM_BUILD_DIR/my-upload-key.jks" ]; then
+            keytool -genkeypair -v \
+              -keystore "$CM_BUILD_DIR/my-upload-key.jks" \
+              -storepass "${STORE_PASSWORD:-android}" \
+              -alias upload \
+              -keypass "${KEY_PASSWORD:-android}" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=LedgerMate Release,O=LedgerMate,C=US"
+          fi
+      - name: Build Release APK & AAB
+        script: |
+          STORE_PASSWORD="${STORE_PASSWORD:-android}" \
+          KEY_PASSWORD="${KEY_PASSWORD:-android}" \
+          ./gradlew assembleRelease bundleRelease --stacktrace --no-daemon
+    artifacts:
+      - app/build/outputs/**/*.apk
+      - app/build/outputs/**/*.aab
+      - app/build/outputs/mapping/**/*.txt

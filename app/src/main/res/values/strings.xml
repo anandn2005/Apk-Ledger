@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">LedgerMate</string>
+    <string name="shortcut_add_sale_short">Add Sale</string>
+    <string name="shortcut_add_sale_long">Record a Customer Sale</string>
+    <string name="shortcut_add_deposit_short">Add Deposit</string>
+    <string name="shortcut_add_deposit_long">Record Payment Received</string>
+    <string name="shortcut_view_today_short">View Today</string>
+    <string name="shortcut_view_today_long">Open Today\'s Ledger Entries</string>
+</resources>

@@ -1,0 +1,15 @@
+# Declare binary files to prevent Git line ending conversion corruption
+*.jar binary
+*.keystore binary
+*.png binary
+*.webp binary
+*.aar binary
+
+# Explicitly declare text files and normalization
+gradlew text eol=lf
+*.kt text
+*.kts text
+*.xml text
+*.properties text
+*.yml text
+*.yaml text

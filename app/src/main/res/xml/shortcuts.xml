@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add_sale"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_add_sale_short"
+        android:shortcutLongLabel="@string/shortcut_add_sale_long">
+        <intent
+            android:action="com.example.ACTION_ADD_SALE"
+            android:targetPackage="com.aistudio.ledgermate.app"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="add_deposit"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_add_deposit_short"
+        android:shortcutLongLabel="@string/shortcut_add_deposit_long">
+        <intent
+            android:action="com.example.ACTION_ADD_DEPOSIT"
+            android:targetPackage="com.aistudio.ledgermate.app"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="view_today"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_view_today_short"
+        android:shortcutLongLabel="@string/shortcut_view_today_long">
+        <intent
+            android:action="com.example.ACTION_VIEW_TODAY"
+            android:targetPackage="com.aistudio.ledgermate.app"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_glass_bg_dark">#E60F172A</color>
+    <color name="widget_glass_border_dark">#3394A3B8</color>
+    <color name="widget_text_primary">#F8FAFC</color>
+    <color name="widget_text_secondary">#94A3B8</color>
+    <color name="widget_price_accent">#818CF8</color>
+    <color name="widget_header_bg">#1E1B4B</color>
+    <color name="widget_row_divider">#1E293B</color>
+    <color name="splash_background">#FAFCF9</color>
+    <color name="brand_green">#379358</color>
+</resources>
