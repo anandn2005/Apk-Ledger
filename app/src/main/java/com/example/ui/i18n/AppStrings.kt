@@ -126,20 +126,24 @@ object AppStrings {
 
     // --- QUICK ACTIONS & FAB ---
     fun addSale(lang: AppLanguage): String = when (lang) {
-        AppLanguage.HINDI -> "बिक्री जोड़ें (+)"
-        AppLanguage.SPANISH -> "Añadir Venta"
-        AppLanguage.CHINESE -> "添加销售"
-        AppLanguage.RUSSIAN -> "Добавить продажу"
-        else -> "Add Sale"
+        AppLanguage.HINDI -> "उधार बिक्री (+)"
+        AppLanguage.SPANISH -> "Venta a crédito"
+        AppLanguage.CHINESE -> "赊销入账"
+        AppLanguage.RUSSIAN -> "Продажа в долг"
+        else -> "Sale on credit"
     }
 
     fun addDeposit(lang: AppLanguage): String = when (lang) {
-        AppLanguage.HINDI -> "जमा जोड़ें (-)"
-        AppLanguage.SPANISH -> "Añadir Cobro"
-        AppLanguage.CHINESE -> "添加付款"
-        AppLanguage.RUSSIAN -> "Добавить платёж"
-        else -> "Add Deposit"
+        AppLanguage.HINDI -> "भुगतान प्राप्त (-)"
+        AppLanguage.SPANISH -> "Pago recibido"
+        AppLanguage.CHINESE -> "收到回款"
+        AppLanguage.RUSSIAN -> "Получен платёж"
+        else -> "Payment received"
     }
+
+    fun saleOnCredit(lang: AppLanguage): String = addSale(lang)
+
+    fun paymentReceived(lang: AppLanguage): String = addDeposit(lang)
 
     fun addCustomer(lang: AppLanguage): String = when (lang) {
         AppLanguage.HINDI -> "नया ग्राहक"
@@ -191,19 +195,19 @@ object AppStrings {
     }
 
     fun youWillGet(lang: AppLanguage): String = when (lang) {
-        AppLanguage.HINDI -> "लेना है"
+        AppLanguage.HINDI -> "लेनदारी (Receivable)"
         AppLanguage.SPANISH -> "Por cobrar"
         AppLanguage.CHINESE -> "应收款"
-        AppLanguage.RUSSIAN -> "Вам должны"
-        else -> "You'll Get"
+        AppLanguage.RUSSIAN -> "К получению"
+        else -> "Receivable"
     }
 
     fun youWillGive(lang: AppLanguage): String = when (lang) {
-        AppLanguage.HINDI -> "देना है"
+        AppLanguage.HINDI -> "देनदारी (Payable)"
         AppLanguage.SPANISH -> "Por pagar"
         AppLanguage.CHINESE -> "应付款"
-        AppLanguage.RUSSIAN -> "Вы должны"
-        else -> "You'll Give"
+        AppLanguage.RUSSIAN -> "К оплате"
+        else -> "Payable"
     }
 
     fun customerDetails(lang: AppLanguage): String = when (lang) {

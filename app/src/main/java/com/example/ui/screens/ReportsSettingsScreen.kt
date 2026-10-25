@@ -558,6 +558,68 @@ fun ReportsSettingsScreen(
                                 }
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = dividerColor, thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Ordinary Dark Mode Switch Row (#19)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onToggleDarkMode(!isDark)
+                                }
+                                .padding(vertical = 4.dp)
+                                .testTag("settings_dark_mode_row"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = accentGreenLight,
+                                    modifier = Modifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                            contentDescription = null,
+                                            tint = accentGreen,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Dark Theme",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textPrimary
+                                    )
+                                    Text(
+                                        text = if (isDark) "Dark mode is active" else "Light mode is active",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = textSecondary
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = isDark,
+                                onCheckedChange = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onToggleDarkMode(it)
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = accentGreen
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -673,38 +735,40 @@ fun ReportsSettingsScreen(
                                     }
                                 }
 
-                                HorizontalDivider(color = dividerColor, thickness = 1.dp)
+                                // Crashlytics System Health & Test Crash — strictly behind DEBUG flag (#32)
+                                if (com.example.BuildConfig.DEBUG) {
+                                    HorizontalDivider(color = dividerColor, thickness = 1.dp)
 
-                                // Crashlytics System Health & Test Crash
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(
-                                            text = "Firebase Crashlytics",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = textPrimary
-                                        )
-                                        Text(
-                                            text = "Non-fatal diagnostics active (No PII)",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = textSecondary
-                                        )
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            com.example.crashlytics.AppCrashlytics.triggerTestCrash()
-                                        },
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(1.dp, DebitRed.copy(alpha = 0.5f)),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DebitRed),
-                                        modifier = Modifier.height(32.dp)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Test Crash", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Column {
+                                            Text(
+                                                text = "Firebase Crashlytics (Debug)",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = textPrimary
+                                            )
+                                            Text(
+                                                text = "Non-fatal diagnostics active (No PII)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = textSecondary
+                                            )
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                com.example.crashlytics.AppCrashlytics.triggerTestCrash()
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = BorderStroke(1.dp, DebitRed.copy(alpha = 0.5f)),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = DebitRed),
+                                            modifier = Modifier.height(32.dp)
+                                        ) {
+                                            Text("Test Crash", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }
@@ -712,7 +776,7 @@ fun ReportsSettingsScreen(
                     }
                 }
 
-                item { Spacer(modifier = Modifier.height(80.dp)) }
+                item { Spacer(modifier = Modifier.height(145.dp)) }
             }
 
             ScrollEdgeShadow(
@@ -2454,7 +2518,7 @@ fun CircularSettingsActionButton(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
-            .widthIn(min = 68.dp, max = 88.dp)
+            .widthIn(min = 74.dp, max = 108.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale

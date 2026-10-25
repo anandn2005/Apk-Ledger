@@ -201,11 +201,12 @@ fun ReceiptGeneratorScreen(
     }
 
     val filteredItemSuggestions = remember(itemDesc, cachedItemSuggestions) {
-        if (itemDesc.isBlank()) emptyList()
+        if (itemDesc.isBlank()) cachedItemSuggestions
         else cachedItemSuggestions.filter { it.first.contains(itemDesc, ignoreCase = true) }
     }
 
     var isSubmitted by remember { mutableStateOf(false) }
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     // Auto-save receipt draft
     LaunchedEffect(
@@ -346,7 +347,13 @@ fun ReceiptGeneratorScreen(
                 },
                 actions = {
                     TextButton(
-                        onClick = { handleClearDraft() },
+                        onClick = {
+                            if (items.isNotEmpty() || customerNameInput.isNotBlank() || notes.isNotBlank()) {
+                                showClearConfirmDialog = true
+                            } else {
+                                handleClearDraft()
+                            }
+                        },
                         colors = ButtonDefaults.textButtonColors(contentColor = DebitRed)
                     ) {
                         Text(
@@ -424,6 +431,20 @@ fun ReceiptGeneratorScreen(
                         }
                     }
 
+                    // Inline reason when Save/Share are disabled (#37)
+                    if (customerNameInput.isBlank() || items.isEmpty()) {
+                        Text(
+                            text = when {
+                                customerNameInput.isBlank() && items.isEmpty() -> "Select a customer and add at least 1 item to generate receipt"
+                                customerNameInput.isBlank() -> "Enter or select a customer name above"
+                                else -> "Add at least 1 item to generate receipt"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = DebitRed,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
                     // Primary Share CTA vs Secondary Save Only
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -479,6 +500,30 @@ fun ReceiptGeneratorScreen(
             }
         }
     ) { innerPadding ->
+        if (showClearConfirmDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearConfirmDialog = false },
+                title = { Text("Clear Receipt Draft?") },
+                text = { Text("This will remove all ${items.size} item(s) and customer details from the current receipt.") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showClearConfirmDialog = false
+                            handleClearDraft()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = DebitRed)
+                    ) {
+                        Text("Clear Receipt", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearConfirmDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
         val scrollState = rememberScrollState()
 
         Column(

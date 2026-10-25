@@ -396,7 +396,7 @@ fun InvoicesScreen(
                         )
                     }
 
-                    item { Spacer(modifier = Modifier.height(80.dp)) }
+                    item { Spacer(modifier = Modifier.height(145.dp)) }
                 }
 
                 ScrollEdgeShadow(
@@ -507,11 +507,11 @@ fun InvoiceCardItem(
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else if (isDark) MaterialTheme.colorScheme.surface.copy(alpha = 0.85f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else if (isDark) Color(0xFF1E1E20) else Color.White
         ),
         border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                 else androidx.compose.foundation.BorderStroke(1.dp, if (isDark) androidx.compose.material3.MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 4.dp else 2.dp),
+                 else androidx.compose.foundation.BorderStroke(1.dp, if (isDark) Color(0xFF333336) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(

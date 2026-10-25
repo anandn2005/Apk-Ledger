@@ -140,7 +140,7 @@ fun AddQuickSaleDepositSheet(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     val isSale = initialType == TransactionType.GAVE_CREDIT.name
-    val actionTitle = if (isSale) "Add Sale" else "Add Deposit"
+    val actionTitle = if (isSale) "Sale on credit" else "Payment received"
     val actionIcon = if (isSale) Icons.Outlined.CallMade else Icons.Outlined.CallReceived
 
     // Customer Selection State
@@ -449,7 +449,7 @@ fun AddQuickSaleDepositSheet(
                                     text = Formatters.formatCurrency(Math.abs(custItem.netBalance), currencySymbol),
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (custItem.netBalance > 0) DebitRed else CreditGreen
+                                    color = if (custItem.netBalance > 0) CreditGreen else DebitRed
                                 )
                             }
 
@@ -494,153 +494,53 @@ fun AddQuickSaleDepositSheet(
             }
 
             // ============================================================
-            // FIELD 2 & 3: AMOUNT & DEFAULT ANDROID DATE SELECTOR
+            // FIELD 2: AMOUNT INPUT (Full width — single date chips row below per #33)
             // ============================================================
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                // Amount Field
-                Column(modifier = Modifier.weight(1.05f)) {
-                    Text(
-                        text = "AMOUNT ($currencySymbol) *",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextSecondary,
-                        letterSpacing = 0.8.sp,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "AMOUNT ($currencySymbol) *",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextSecondary,
+                    letterSpacing = 0.8.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
 
-                    OutlinedTextField(
-                        value = amountText,
-                        onValueChange = { input ->
-                            amountText = input.filter { char ->
-                                char.isDigit() || char == '.' || char == '+' || char == '*' || char == '×' || char == '-'
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .focusRequester(amountFocusRequester)
-                            .testTag("quick_entry_amount_input"),
-                        placeholder = { Text("0 or 120+50", fontSize = 15.sp) },
-                        prefix = { Text("$currencySymbol ", fontWeight = FontWeight.Bold, color = AccentGreen) },
-                        suffix = if (hasMathOperators && evaluatedAmount > 0.0) {
-                            {
-                                Text(
-                                    text = "= ${if (evaluatedAmount % 1.0 == 0.0) evaluatedAmount.toLong().toString() else String.format(Locale.US, "%.2f", evaluatedAmount)}",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AccentGreen
-                                )
-                            }
-                        } else null,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AccentGreen,
-                            unfocusedBorderColor = BorderGreenGray,
-                            focusedContainerColor = Color.White,
-                            unfocusedContainerColor = Color.White
-                        )
-                    )
-                }
-
-                // Default Android Date Selector Field
-                Column(modifier = Modifier.weight(1.15f)) {
-                    Text(
-                        text = "DATE *",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextSecondary,
-                        letterSpacing = 0.8.sp,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, BorderGreenGray, RoundedCornerShape(12.dp))
-                            .clickable {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                launchQuickEntryDatePicker(context, selectedDateTs) { ts ->
-                                    selectedDateTs = ts
-                                    dateText = Formatters.formatDate(ts)
-                                }
-                            }
-                            .testTag("quick_entry_date_selector"),
-                        color = Color.White,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .background(AccentGreenLight, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CalendarToday,
-                                        contentDescription = "Select Date",
-                                        tint = AccentGreen,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                Column(verticalArrangement = Arrangement.Center) {
-                                    Text(
-                                        text = dateText,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = TextPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    val isToday = Formatters.isSameCalendarDay(selectedDateTs, System.currentTimeMillis())
-                                    val isYesterday = Formatters.isSameCalendarDay(selectedDateTs, System.currentTimeMillis() - 86400000L)
-                                    val subText = when {
-                                        isToday -> "Today"
-                                        isYesterday -> "Yesterday"
-                                        else -> null
-                                    }
-                                    if (subText != null) {
-                                        Text(
-                                            text = subText,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = AccentGreen,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            }
-
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Open Date Selector",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(20.dp)
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { input ->
+                        amountText = input.filter { char ->
+                            char.isDigit() || char == '.' || char == '+' || char == '*' || char == '×' || char == '-'
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .focusRequester(amountFocusRequester)
+                        .testTag("quick_entry_amount_input"),
+                    placeholder = { Text("0 or 120+50", fontSize = 15.sp) },
+                    prefix = { Text("$currencySymbol ", fontWeight = FontWeight.Bold, color = AccentGreen) },
+                    suffix = if (hasMathOperators && evaluatedAmount > 0.0) {
+                        {
+                            Text(
+                                text = "= ${Formatters.formatCurrency(evaluatedAmount, currencySymbol)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = AccentGreen
                             )
                         }
-                    }
-                }
+                    } else null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentGreen,
+                        unfocusedBorderColor = BorderGreenGray,
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White
+                    )
+                )
             }
 
             // Quick Amount & Inline Calculator Chips (+100, +500, +1000, +, ×)
@@ -794,7 +694,7 @@ fun AddQuickSaleDepositSheet(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Calendar",
+                            text = if (!isTodaySelected && !isYesterdaySelected) dateText else "Calendar",
                             fontSize = 12.sp,
                             fontWeight = if (!isTodaySelected && !isYesterdaySelected) FontWeight.Bold else FontWeight.Medium,
                             color = if (!isTodaySelected && !isYesterdaySelected) AccentGreen else TextSecondary
@@ -961,12 +861,26 @@ fun AddQuickSaleDepositSheet(
             )
 
             // ============================================================
-            // BOTTOM ACTION BUTTONS
+            // BOTTOM ACTION BUTTONS + INLINE DISABLED REASON (#37)
             // ============================================================
+            if (!isSaveEnabled) {
+                Text(
+                    text = when {
+                        selectedCustomerId.isBlank() && evaluatedAmount <= 0.0 -> "Select a customer and enter an amount greater than 0"
+                        selectedCustomerId.isBlank() -> "Select or add a customer above"
+                        else -> "Amount must be greater than 0"
+                    },
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = DebitRed,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1021,7 +935,8 @@ fun AddQuickSaleDepositSheet(
                     Text(
                         text = "Save $actionTitle",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        fontSize = 14.sp,
+                        maxLines = 1
                     )
                 }
             }

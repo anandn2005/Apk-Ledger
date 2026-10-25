@@ -18,7 +18,7 @@ import kotlinx.coroutines.Dispatchers
         RateItemEntity::class,
         PriceHistoryEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class LedgerDatabase : RoomDatabase() {
@@ -28,6 +28,21 @@ abstract class LedgerDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var INSTANCE: LedgerDatabase? = null
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE customers ADD COLUMN area TEXT NOT NULL DEFAULT ''")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                try {
+                    db.execSQL("ALTER TABLE transactions ADD COLUMN dueDate INTEGER NOT NULL DEFAULT 0")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
 
         val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -82,7 +97,7 @@ abstract class LedgerDatabase : RoomDatabase() {
                     LedgerDatabase::class.java,
                     "ledgermate_database"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance

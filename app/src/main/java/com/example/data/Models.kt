@@ -31,11 +31,12 @@ data class CustomerEntity(
     val partyType: String = PARTY_TYPE_CUSTOMER, // CUSTOMER or SUPPLIER
     val notes: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val lastUpdated: Long = createdAt
+    val lastUpdated: Long = createdAt,
+    val area: String = ""
 ) {
     @delegate:androidx.room.Ignore
     val searchTokens: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
-        "${name.lowercase()} ${businessName.lowercase()} ${phone.lowercase()}"
+        "${name.lowercase()} ${businessName.lowercase()} ${phone.lowercase()} ${area.lowercase()}"
     }
 
     companion object {
@@ -73,7 +74,8 @@ data class TransactionEntity(
     val lastUpdated: Long = date,
     val quantity: Double = 1.0,
     val rate: Double = 0.0,
-    val subtotal: Double = 0.0
+    val subtotal: Double = 0.0,
+    val dueDate: Long = 0L
 )
 
 @Immutable
@@ -347,7 +349,8 @@ data class CustomerWithBalance(
     val totalGave: Double = 0.0,
     val totalGot: Double = 0.0,
     val netBalance: Double = 0.0, // Positive = Customer owes us (Receivable), Negative = We owe customer (Payable)
-    val lastTransactionDate: Long? = null
+    val lastTransactionDate: Long? = null,
+    val oldestDueDate: Long? = null
 )
 
 @Immutable

@@ -137,6 +137,42 @@ fun CustomersScreen(
     // Persistent View Mode State: "ALL" vs "DATE_WISE"
     var viewMode by rememberSaveable { mutableStateOf("ALL") }
     var selectedDateTimestamp by rememberSaveable { mutableStateOf(Formatters.shiftCalendarDay(System.currentTimeMillis(), 0)) }
+    var selectedSortOptionName by rememberSaveable { mutableStateOf(com.example.feature.customers.CustomerSortOption.RECENT.name) }
+    val selectedSortOption = remember(selectedSortOptionName) {
+        runCatching { com.example.feature.customers.CustomerSortOption.valueOf(selectedSortOptionName) }
+            .getOrDefault(com.example.feature.customers.CustomerSortOption.RECENT)
+    }
+    var selectedAreaFilter by rememberSaveable { mutableStateOf("ALL") }
+    val availableAreas = remember(state.customers) {
+        state.customers.mapNotNull { it.customer.area.trim().takeIf { a -> a.isNotBlank() } }.distinct().sorted()
+    }
+    val displayedCustomers = remember(state.customers, selectedSortOption, selectedAreaFilter, state.pinnedCustomerIds) {
+        val areaFiltered = if (selectedAreaFilter == "ALL") {
+            state.customers
+        } else {
+            state.customers.filter { it.customer.area.equals(selectedAreaFilter, ignoreCase = true) }
+        }
+        val sorted = when (selectedSortOption) {
+            com.example.feature.customers.CustomerSortOption.RECENT ->
+                areaFiltered.sortedByDescending { it.lastTransactionDate ?: it.customer.createdAt }
+            com.example.feature.customers.CustomerSortOption.HIGHEST_DUE ->
+                areaFiltered.sortedByDescending { it.netBalance }
+            com.example.feature.customers.CustomerSortOption.OLDEST_DUE ->
+                areaFiltered.sortedWith(
+                    compareByDescending<CustomerWithBalance> { it.netBalance > 0 }
+                        .thenBy { it.oldestDueDate ?: it.lastTransactionDate ?: it.customer.createdAt }
+                )
+            com.example.feature.customers.CustomerSortOption.NAME ->
+                areaFiltered.sortedBy { it.customer.name.lowercase() }
+            com.example.feature.customers.CustomerSortOption.AREA ->
+                areaFiltered.sortedWith(
+                    compareBy<CustomerWithBalance> { it.customer.area.ifBlank { "zzz" }.lowercase() }
+                        .thenBy { it.customer.name.lowercase() }
+                )
+        }
+        val (pinned, unpinned) = sorted.partition { state.pinnedCustomerIds.contains(it.customer.id) }
+        pinned + unpinned
+    }
     val customerMap = remember(state.customers) { state.customers.associate { it.customer.id to it.customer.name } }
 
     LaunchedEffect(viewMode, selectedDateTimestamp) {
@@ -285,25 +321,35 @@ fun CustomersScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    // Daily Closing Icon Button (EoD Settlement)
+                                    // Daily Closing Labeled Pill Button (EoD Settlement) (#6)
                                     Surface(
-                                        shape = CircleShape,
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onDailyClosingClick()
+                                        },
+                                        shape = RoundedCornerShape(50),
                                         color = if (isAppInDarkTheme()) Color(0xFF2C2C2E) else Color(0xFFF2F2F7),
                                         border = BorderStroke(1.dp, if (isAppInDarkTheme()) Color(0xFF3A3A3C) else Color(0xFFE5E5EA)),
-                                        modifier = Modifier.size(34.dp)
+                                        modifier = Modifier
+                                            .height(34.dp)
+                                            .testTag("daily_closing_button")
                                     ) {
-                                        IconButton(
-                                            onClick = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                onDailyClosingClick()
-                                            },
-                                            modifier = Modifier.testTag("daily_closing_button")
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Assessment,
                                                 contentDescription = "Daily Closing Summary",
                                                 tint = AccentGreen,
-                                                modifier = Modifier.size(18.dp)
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = "Closing",
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isAppInDarkTheme()) Color.White else TextPrimary
                                             )
                                         }
                                     }
@@ -425,15 +471,16 @@ fun CustomersScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val filters = listOf(
-                                Triple("ALL", "All", state.customers.size),
-                                Triple("OWED", "To Collect • ${Formatters.formatCurrency(state.summary.totalReceivable, state.currencySymbol)}", -1),
-                                Triple("ADVANCE", "To Pay • ${Formatters.formatCurrency(state.summary.totalPayable, state.currencySymbol)}", -1)
+                                Triple("ALL", "${AppStrings.all(currentLang)} (${state.customers.size})", state.customers.size),
+                                Triple("OWED", "${AppStrings.youWillGet(currentLang)} • ${Formatters.formatCurrency(state.summary.totalReceivable, state.currencySymbol)}", -1),
+                                Triple("ADVANCE", "${AppStrings.youWillGive(currentLang)} • ${Formatters.formatCurrency(state.summary.totalPayable, state.currencySymbol)}", -1)
                             )
                             filters.forEach { (key, label, _) ->
                                 val selected = activeFilter == key
+                                // Consistent money color rule (#2): Green = Receivable coming to you, Red = Payable you owe
                                 val pillAccent = when (key) {
-                                    "OWED" -> DebitRed
-                                    "ADVANCE" -> CreditGreen
+                                    "OWED" -> CreditGreen
+                                    "ADVANCE" -> DebitRed
                                     else -> AccentGreen
                                 }
                                 Surface(
@@ -463,6 +510,75 @@ fun CustomersScreen(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                                     )
+                                }
+                            }
+                        }
+
+                        // Sort & Area/Village collection chips (#5, #25, #26)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        androidx.compose.foundation.lazy.LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val sortOptions = listOf(
+                                com.example.feature.customers.CustomerSortOption.RECENT to "Recent",
+                                com.example.feature.customers.CustomerSortOption.HIGHEST_DUE to "Highest Due",
+                                com.example.feature.customers.CustomerSortOption.OLDEST_DUE to "Oldest Due",
+                                com.example.feature.customers.CustomerSortOption.AREA to "By Area"
+                            )
+                            items(sortOptions.size) { idx ->
+                                val (opt, label) = sortOptions[idx]
+                                val isSortSelected = selectedSortOption == opt
+                                Surface(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        selectedSortOptionName = opt.name
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isSortSelected) AccentGreen.copy(alpha = 0.14f)
+                                    else (if (isDarkFilter) Color(0xFF1C1C1E) else Color(0xFFF5F5F7)),
+                                    border = BorderStroke(
+                                        0.8.dp,
+                                        if (isSortSelected) AccentGreen.copy(alpha = 0.5f)
+                                        else (if (isDarkFilter) Color(0xFF2C2C2E) else Color(0xFFE5E5EA))
+                                    ),
+                                    modifier = Modifier.testTag("customer_sort_${opt.name}")
+                                ) {
+                                    Text(
+                                        text = "Sort: $label",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (isSortSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSortSelected) AccentGreen else TextSecondary,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            if (availableAreas.isNotEmpty()) {
+                                items(availableAreas.size) { areaIdx ->
+                                    val areaName = availableAreas[areaIdx]
+                                    val isAreaSelected = selectedAreaFilter.equals(areaName, ignoreCase = true)
+                                    Surface(
+                                        onClick = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            selectedAreaFilter = if (isAreaSelected) "ALL" else areaName
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isAreaSelected) AccentGreen.copy(alpha = 0.18f)
+                                        else (if (isDarkFilter) Color(0xFF1C1C1E) else Color(0xFFF5F5F7)),
+                                        border = BorderStroke(
+                                            0.8.dp,
+                                            if (isAreaSelected) AccentGreen else (if (isDarkFilter) Color(0xFF2C2C2E) else Color(0xFFE5E5EA))
+                                        )
+                                    ) {
+                                        Text(
+                                            text = "📍 $areaName",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = if (isAreaSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isAreaSelected) AccentGreen else TextSecondary,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -851,7 +967,7 @@ fun CustomersScreen(
                                         )
 
                                         Text(
-                                            text = if (isCredit) "GAVE" else "GOT",
+                                            text = if (isCredit) AppStrings.saleOnCredit(currentLang) else AppStrings.paymentReceived(currentLang),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Medium,
                                             textAlign = TextAlign.End,
@@ -888,7 +1004,7 @@ fun CustomersScreen(
             // ============================================================
             // STANDARD ALL CUSTOMERS LIST VIEW
             // ============================================================
-            if (state.customers.isEmpty()) {
+            if (displayedCustomers.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -897,7 +1013,7 @@ fun CustomersScreen(
                 ) {
                     PremiumEmptyState(
                         title = "No collections logged for this period.",
-                        subtitle = if (state.customerSearchQuery.isNotBlank())
+                        subtitle = if (state.customerSearchQuery.isNotBlank() || selectedAreaFilter != "ALL")
                             "No matching customers found."
                         else
                             "Tap '+ Customer' below to add your first customer and start logging collections."
@@ -919,7 +1035,7 @@ fun CustomersScreen(
                         contentPadding = PaddingValues(top = 6.dp, bottom = 150.dp)
                     ) {
                         items(
-                            items = state.customers,
+                            items = displayedCustomers,
                             key = { it.customer.id },
                             contentType = { "customer_card_item" }
                         ) { item ->
@@ -1048,11 +1164,12 @@ private fun CustomerCardItem(
                     .weight(1f)
                     .padding(end = 12.dp)
             ) {
-                // Consistent 44dp Avatar Circle
+                // Deterministic multi-color 44dp Avatar Circle (#5)
+                val (avatarBg, avatarFg) = com.example.feature.customers.CustomersViewModel.avatarColorsForName(cust.name, isDark)
                 Surface(
                     shape = CircleShape,
-                    color = if (isDark) Color(0xFF1E3A27) else AccentGreenLight,
-                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.2f)),
+                    color = avatarBg,
+                    border = BorderStroke(1.dp, avatarFg.copy(alpha = 0.25f)),
                     modifier = Modifier.size(44.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -1060,13 +1177,13 @@ private fun CustomerCardItem(
                             text = cust.name.trim().take(1).uppercase().ifBlank { "C" },
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = AccentGreen
+                            color = avatarFg
                         )
                     }
                 }
 
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Row(
@@ -1083,6 +1200,23 @@ private fun CustomerCardItem(
                             modifier = Modifier.weight(1f, fill = false)
                         )
 
+                        if (cust.area.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isDark) Color(0xFF2C2C2E) else Color(0xFFF0FDF4),
+                                border = BorderStroke(0.5.dp, AccentGreen.copy(alpha = 0.35f))
+                            ) {
+                                Text(
+                                    text = cust.area,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AccentGreen,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+
                         if (isPinned) {
                             Icon(
                                 imageVector = Icons.Default.PushPin,
@@ -1093,24 +1227,48 @@ private fun CustomerCardItem(
                         }
                     }
 
-                    val subtitleText = listOfNotNull(
-                        cust.businessName.takeIf { it.isNotBlank() },
-                        cust.phone.takeIf { it.isNotBlank() }
-                    ).joinToString(" • ")
+                    val ageDays = com.example.feature.customers.CustomersViewModel.computeAgeingDays(item)
+                    val isOverdue = isOwed && ageDays >= 30
+                    val lastActivityText = Formatters.formatRelativeDateOrAge(item.lastTransactionDate ?: 0L)
+                    val metaParts = buildList {
+                        cust.businessName.takeIf { it.isNotBlank() }?.let { add(it) }
+                        cust.phone.takeIf { it.isNotBlank() }?.let { add(it) }
+                        if (!isOverdue && lastActivityText.isNotBlank()) add(lastActivityText)
+                    }.joinToString(" • ")
 
-                    if (subtitleText.isNotBlank()) {
-                        Text(
-                            text = subtitleText,
-                            fontSize = 12.sp,
-                            color = TextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (isOverdue) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = DebitRed.copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = "Overdue ${ageDays}d",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DebitRed,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        if (metaParts.isNotBlank()) {
+                            Text(
+                                text = metaParts,
+                                fontSize = 12.sp,
+                                color = TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
 
             // Right block: Right-aligned Amount & Status with tabular numbers
+            // Consistent Money Color (#2): Positive Receivable = Green (CreditGreen), Negative Payable = Red (DebitRed)
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1123,7 +1281,7 @@ private fun CustomerCardItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     ),
-                    color = if (net == 0.0) TextSecondary else (if (isOwed) DebitRed else CreditGreen)
+                    color = if (net == 0.0) TextSecondary else (if (isOwed) CreditGreen else DebitRed)
                 )
 
                 Text(
@@ -1131,7 +1289,7 @@ private fun CustomerCardItem(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     textAlign = TextAlign.End,
-                    color = if (net == 0.0) TextSecondary else (if (isOwed) DebitRed.copy(alpha = 0.85f) else CreditGreen.copy(alpha = 0.85f))
+                    color = if (net == 0.0) TextSecondary else (if (isOwed) CreditGreen.copy(alpha = 0.9f) else DebitRed.copy(alpha = 0.9f))
                 )
             }
         }

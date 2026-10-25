@@ -231,6 +231,25 @@ fun CustomerDetailScreen(
                                 }
                             )
 
+                            // One-tap Customer Statement PDF (#27)
+                            SoftCircularActionButton(
+                                icon = Icons.Default.PictureAsPdf,
+                                contentDescription = "Share Statement PDF",
+                                tint = CreditGreen,
+                                onClick = {
+                                    com.example.core.common.CustomerStatementPdfGenerator.generateAndShareStatement(
+                                        context = context,
+                                        customer = customer,
+                                        transactions = transactions,
+                                        businessName = businessName,
+                                        businessPhone = businessPhone,
+                                        businessAddress = businessAddress,
+                                        upiId = upiId,
+                                        currencySymbol = currencySymbol
+                                    )
+                                }
+                            )
+
                             SoftCircularActionButton(
                                 icon = Icons.Default.Edit,
                                 contentDescription = "Edit Customer",
@@ -282,9 +301,9 @@ fun CustomerDetailScreen(
                                     onAddTransactionClick(TransactionType.GAVE_CREDIT.name)
                                 }
                         ) {
-                            Icon(Icons.Default.RemoveCircle, contentDescription = "Sale", tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("SALE", fontWeight = FontWeight.Bold, color = Color.White)
+                            Icon(Icons.Default.RemoveCircle, contentDescription = "Sale on credit", tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sale on credit", fontWeight = FontWeight.Bold, fontSize = 13.5.sp, color = Color.White, maxLines = 1)
                         }
 
                         Button(
@@ -304,9 +323,9 @@ fun CustomerDetailScreen(
                                     onAddTransactionClick(TransactionType.GOT_PAYMENT.name)
                                 }
                         ) {
-                            Icon(Icons.Default.AddCircle, contentDescription = "Deposit", tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("DEPOSIT", fontWeight = FontWeight.Bold, color = Color.White)
+                            Icon(Icons.Default.AddCircle, contentDescription = "Payment received", tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Payment received", fontWeight = FontWeight.Bold, fontSize = 13.5.sp, color = Color.White, maxLines = 1)
                         }
                     }
                 }
@@ -418,6 +437,82 @@ fun CustomerDetailScreen(
                                 else -> MaterialTheme.colorScheme.onSurface
                             }
                         )
+
+                        if (customer.area.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Area / Village: ${customer.area}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Quick Action Strip: Statement PDF (#27) & WhatsApp UPI Reminder (#25)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                onClick = {
+                                    com.example.core.common.CustomerStatementPdfGenerator.generateAndShareStatement(
+                                        context = context,
+                                        customer = customer,
+                                        transactions = transactions,
+                                        businessName = businessName,
+                                        businessPhone = businessPhone,
+                                        businessAddress = businessAddress,
+                                        upiId = upiId,
+                                        currencySymbol = currencySymbol
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                                modifier = Modifier.testTag("share_statement_pdf_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = CreditGreen, modifier = Modifier.size(14.dp))
+                                    Text("PDF Statement", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+
+                            if (netBalance > 0) {
+                                Surface(
+                                    onClick = {
+                                        val amountFormatted = Formatters.formatCurrency(Math.abs(netBalance), currencySymbol)
+                                        val biz = businessName.ifBlank { "Our Store" }
+                                        val upiLink = if (upiId.isNotBlank()) {
+                                            "\nPay via UPI ($upiId): upi://pay?pa=${Uri.encode(upiId)}&pn=${Uri.encode(biz)}&am=${String.format(java.util.Locale.US, "%.2f", Math.abs(netBalance))}&cu=INR"
+                                        } else ""
+                                        val msg = "Namaste ${customer.name}, your pending balance with *$biz* is *$amountFormatted*.$upiLink\nThank you!"
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, msg)
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Send Payment Reminder"))
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = StatusEmerald.copy(alpha = 0.15f),
+                                    border = BorderStroke(1.dp, StatusEmerald.copy(alpha = 0.35f)),
+                                    modifier = Modifier.testTag("whatsapp_upi_reminder_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    ) {
+                                        Icon(Icons.Default.Send, contentDescription = null, tint = CreditGreenDark, modifier = Modifier.size(14.dp))
+                                        Text("Remind + UPI", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = badgeTextColor)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -711,40 +806,43 @@ fun SwipeableTransactionItemCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    // Row 3: Payment Mode Badge + Status Badge
+                    // Row 3: Payment Mode Badge + Status Badge (Never show duplicate "DUE DUE" chips #35)
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val modeText = if (txn.paymentMethod.isNotBlank()) txn.paymentMethod else "CASH"
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        val showModeBadge = !(modeText.equals("DUE", ignoreCase = true) && isDue)
+                        if (showModeBadge) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
                             ) {
-                                Icon(
-                                    imageVector = when (modeText.uppercase()) {
-                                        "UPI" -> Icons.Default.QrCode
-                                        "BANK", "TRANSFER" -> Icons.Default.AccountBalance
-                                        "CHEQUE" -> Icons.Default.Receipt
-                                        else -> Icons.Default.Payments
-                                    },
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = modeText.uppercase(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = when (modeText.uppercase()) {
+                                            "UPI" -> Icons.Default.QrCode
+                                            "BANK", "TRANSFER" -> Icons.Default.AccountBalance
+                                            "CHEQUE" -> Icons.Default.Receipt
+                                            else -> Icons.Default.Payments
+                                        },
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = modeText.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
 
@@ -816,7 +914,7 @@ fun SwipeableTransactionItemCard(
                     )
 
                     Text(
-                        text = if (isSettledPaid) "Settled" else if (isGaveCredit) "Sale (Due)" else "Deposit",
+                        text = if (isSettledPaid) "Settled" else if (isGaveCredit) "Sale on credit" else "Payment received",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (isSettledPaid) CreditGreen else if (isGaveCredit) DebitRed else CreditGreen

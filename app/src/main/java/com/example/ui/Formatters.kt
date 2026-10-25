@@ -16,8 +16,39 @@ object Formatters {
     private val monthNamesShort = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
     private val dayNamesShort = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
-    fun formatCurrency(amount: Double, currencySymbol: String = "$"): String {
-        return "$currencySymbol${currencyFormatter.get()?.format(amount)}"
+    fun formatCurrency(amount: Double, currencySymbol: String = "₹"): String {
+        val safeAmount = if (amount.isNaN() || amount.isInfinite()) 0.0 else kotlin.math.abs(amount)
+        val money = com.example.data.MoneyMath.fromRupeesDouble(safeAmount)
+        return com.example.data.MoneyMath.formatMoney(money, currencySymbol)
+    }
+
+    fun formatSignedCurrency(amount: Double, currencySymbol: String = "₹"): String {
+        val safeAmount = if (amount.isNaN() || amount.isInfinite()) 0.0 else amount
+        val money = com.example.data.MoneyMath.fromRupeesDouble(kotlin.math.abs(safeAmount))
+        val formatted = com.example.data.MoneyMath.formatMoney(money, currencySymbol)
+        return when {
+            safeAmount > 0.004 -> "+$formatted"
+            safeAmount < -0.004 -> "-$formatted"
+            else -> formatted
+        }
+    }
+
+    fun daysSince(timestamp: Long, nowMs: Long = System.currentTimeMillis()): Int {
+        if (timestamp <= 0L) return 0
+        val diff = (nowMs - timestamp).coerceAtLeast(0L)
+        return (diff / (24L * 60L * 60L * 1000L)).toInt()
+    }
+
+    fun formatRelativeDateOrAge(timestamp: Long, isOverdueCandidate: Boolean = false): String {
+        if (timestamp <= 0L) return "No entries yet"
+        val days = daysSince(timestamp)
+        return when {
+            isOverdueCandidate && days > 30 -> "Overdue ${days}d"
+            days == 0 -> "Today"
+            days == 1 -> "Yesterday"
+            days in 2..30 -> "${days}d ago"
+            else -> formatDateShort(timestamp)
+        }
     }
 
     /**

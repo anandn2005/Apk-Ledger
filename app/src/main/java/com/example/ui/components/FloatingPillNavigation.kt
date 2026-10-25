@@ -202,11 +202,11 @@ fun FloatingPillNavigationBar(
         )
     )
 
-    // Dynamic Surface Tint:
+    // Frosted / opaque surface tint so list rows underneath do not bleed through (#1)
     val containerColor = if (darkActive) {
-        Color(0xCC18181B)
+        Color(0xF518181B)
     } else {
-        Color(0xF2FFFFFF)
+        Color(0xFAFFFFFF)
     }
 
     Surface(
@@ -450,34 +450,19 @@ fun ContextualActionFab(
                     onClick()
                 }
             )
-            .testTag(if (activeTab == 3) "fab_dark_mode_toggle" else "contextual_action_fab"),
+            .testTag("contextual_action_fab"),
         contentAlignment = Alignment.Center
     ) {
-        androidx.compose.animation.Crossfade(
-            targetState = activeTab == 3,
-            animationSpec = tween(150),
-            label = "fabIconMorph"
-        ) { isSettingsTab ->
-            if (isSettingsTab) {
-                Icon(
-                    imageVector = if (darkActive) Icons.Default.LightMode else Icons.Default.DarkMode,
-                    contentDescription = if (darkActive) "Switch to Light Mode" else "Switch to Dark Mode",
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Contextual Action",
-                    tint = Color.White,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .graphicsLayer {
-                            rotationZ = rotationAngle
-                        }
-                )
-            }
-        }
+        Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = "Quick Add Action",
+            tint = Color.White,
+            modifier = Modifier
+                .size(24.dp)
+                .graphicsLayer {
+                    rotationZ = rotationAngle
+                }
+        )
     }
 }
 

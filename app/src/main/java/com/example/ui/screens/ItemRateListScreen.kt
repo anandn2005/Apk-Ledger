@@ -401,7 +401,7 @@ fun ItemRateListScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "ItemList",
+                                    text = "Items",
                                     style = MaterialTheme.typography.headlineMedium.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         letterSpacing = (-0.5).sp
@@ -457,10 +457,10 @@ fun ItemRateListScreen(
                             )
                         }
 
-                        // Quick-Bill Counter Mode Toggle Button (+ / - Quantity Stepper)
+                        // Quick-Bill Counter Mode Toggle Button (+ / - Quantity Stepper) with label (#6)
                         Surface(
                             onClick = { isCounterMode = !isCounterMode },
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(12.dp),
                             color = if (isCounterMode || cartItemsMap.isNotEmpty())
                                 MaterialTheme.colorScheme.primaryContainer
                             else
@@ -474,10 +474,14 @@ fun ItemRateListScreen(
                             ),
                             shadowElevation = 1.dp,
                             modifier = Modifier
-                                .size(44.dp)
+                                .height(44.dp)
                                 .testTag("rate_counter_mode_toggle")
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Icon(
                                     imageVector = Icons.Outlined.AddShoppingCart,
                                     contentDescription = "Quick Counter Billing Mode",
@@ -485,15 +489,21 @@ fun ItemRateListScreen(
                                         Color(0xFF10B981)
                                     else
                                         Color(0xFF64748B),
-                                    modifier = Modifier.size(19.dp)
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Bill",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isCounterMode || cartItemsMap.isNotEmpty()) Color(0xFF10B981) else Color(0xFF64748B)
                                 )
                             }
                         }
 
-                        // Compact Spreadsheet View Toggle Button
+                        // Compact Spreadsheet View Toggle Button with label (#6)
                         Surface(
                             onClick = { isCompactView = !isCompactView },
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(12.dp),
                             color = if (isCompactView)
                                 MaterialTheme.colorScheme.primaryContainer
                             else
@@ -507,10 +517,14 @@ fun ItemRateListScreen(
                             ),
                             shadowElevation = 1.dp,
                             modifier = Modifier
-                                .size(44.dp)
+                                .height(44.dp)
                                 .testTag("rate_compact_view_toggle")
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Icon(
                                     imageVector = if (isCompactView) Icons.Outlined.ViewAgenda else Icons.Outlined.TableChart,
                                     contentDescription = "Toggle Compact Spreadsheet View",
@@ -518,14 +532,21 @@ fun ItemRateListScreen(
                                         Color(0xFF10B981)
                                     else
                                         Color(0xFF64748B),
-                                    modifier = Modifier.size(19.dp)
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isCompactView) "Cards" else "Table",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isCompactView) Color(0xFF10B981) else Color(0xFF64748B)
                                 )
                             }
                         }
 
+                        // Category Filter Toggle Button with label (#6)
                         Surface(
                             onClick = { isCategoryPillsVisible = !isCategoryPillsVisible },
-                            shape = CircleShape,
+                            shape = RoundedCornerShape(12.dp),
                             color = if (isCategoryPillsVisible || state.selectedRateCategory != "ALL")
                                 MaterialTheme.colorScheme.primaryContainer
                             else
@@ -538,9 +559,13 @@ fun ItemRateListScreen(
                                     if (isAppInDarkTheme()) DarkBorder else Color(0xFFCBD5E1)
                             ),
                             shadowElevation = 1.dp,
-                            modifier = Modifier.size(44.dp)
+                            modifier = Modifier.height(44.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
                                 Icon(
                                     imageVector = if (isCategoryPillsVisible) Icons.Default.FilterListOff else Icons.Default.FilterList,
                                     contentDescription = "Filter items by category",
@@ -548,7 +573,13 @@ fun ItemRateListScreen(
                                         Color(0xFF10B981)
                                     else
                                         Color(0xFF64748B),
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Filter",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isCategoryPillsVisible || state.selectedRateCategory != "ALL") Color(0xFF10B981) else Color(0xFF64748B)
                                 )
                             }
                         }
@@ -815,23 +846,21 @@ fun ItemRateListScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (state.rateSearchQuery.isBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Button(
-                                onClick = {
-                                    itemToEdit = null
-                                    showAddEditSheet = true
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = Color.White
-                                )
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Add New Item")
-                            }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Button(
+                            onClick = {
+                                itemToEdit = null
+                                showAddEditSheet = true
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (state.rateSearchQuery.isNotBlank()) "Add '${state.rateSearchQuery}' as New Item" else "Add New Item")
                         }
                     }
                 }
@@ -839,7 +868,7 @@ fun ItemRateListScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     LazyColumn(
                         state = listState,
-                        contentPadding = PaddingValues(top = 0.dp, bottom = 88.dp),
+                        contentPadding = PaddingValues(top = 0.dp, bottom = 145.dp),
                         verticalArrangement = Arrangement.Top,
                         modifier = Modifier
                             .fillMaxSize()
@@ -2821,44 +2850,19 @@ fun AddEditItemSheet(
                             )
                         }
 
-                        // Vertical Rolling Unit Wheel Picker (~30% width / fixed 84dp)
+                        // Stock Quantity Field (#7 grouped with Unit)
                         Column(
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier = Modifier.width(108.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "Unit",
+                                text = "Stock Qty ($unit)",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
                             )
 
-                            VerticalUnitWheelPicker(
-                                units = unitOptions,
-                                selectedUnit = unit,
-                                onUnitSelected = { newUnit ->
-                                    unit = newUnit
-                                    isUnitManuallySelected = true
-                                },
-                                modifier = Modifier.width(84.dp)
-                            )
-                        }
-                    }
-
-                    // Row 2: Always-Visible Inline Row: Qty | Buy Price | Total Buy
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Purchase & Inventory Cost",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            // 1. Qty
                             OutlinedTextField(
                                 value = qtyTextFieldValue,
                                 onValueChange = { newVal ->
@@ -2875,7 +2879,6 @@ fun AddEditItemSheet(
                                         }
                                     }
                                 },
-                                label = { Text("Qty", fontSize = 11.sp) },
                                 placeholder = { Text("1") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
@@ -2888,7 +2891,7 @@ fun AddEditItemSheet(
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surface
                                 ),
                                 modifier = Modifier
-                                    .weight(0.85f)
+                                    .fillMaxWidth()
                                     .focusRequester(qtyFocusRequester)
                                     .onFocusChanged { focusState ->
                                         if (focusState.isFocused && qtyTextFieldValue.text.isNotEmpty()) {
@@ -2899,8 +2902,63 @@ fun AddEditItemSheet(
                                     }
                                     .testTag("rate_item_qty_input")
                             )
+                        }
+                    }
 
-                            // 2. Buy (₹/Unit)
+                    // Horizontal Segmented Unit Selector (#7 - replaces cramped vertical stack)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Unit of Measure",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(unitOptions.size) { idx ->
+                                val u = unitOptions[idx]
+                                val isSelectedUnit = u.equals(unit, ignoreCase = true)
+                                Surface(
+                                    onClick = {
+                                        unit = u
+                                        isUnitManuallySelected = true
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isSelectedUnit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelectedUnit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    ),
+                                    modifier = Modifier.testTag("unit_segment_$u")
+                                ) {
+                                    Text(
+                                        text = u,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = if (isSelectedUnit) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelectedUnit) Color.White else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Row 2: Dedicated Purchase Cost Group (#7: Buy Rate per Unit vs Total Purchase Cost)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Purchase Cost (Buy Rate vs Total Cost)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            // 1. Buy Cost per Unit (₹/Unit)
                             OutlinedTextField(
                                 value = unitBuyStr,
                                 onValueChange = { newVal ->
@@ -2913,8 +2971,8 @@ fun AddEditItemSheet(
                                         totalBuyStr = ""
                                     }
                                 },
-                                label = { Text("Buy ($currencySymbol/$unit)", fontSize = 11.sp) },
-                                placeholder = { Text("0.00") },
+                                label = { Text("Cost per $unit ($currencySymbol)", fontSize = 11.sp) },
+                                placeholder = { Text("0") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
@@ -2926,12 +2984,12 @@ fun AddEditItemSheet(
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surface
                                 ),
                                 modifier = Modifier
-                                    .weight(1.1f)
+                                    .weight(1f)
                                     .focusRequester(unitBuyFocusRequester)
                                     .testTag("rate_item_unit_buy_price_input")
                             )
 
-                            // 3. Total Buy (₹)
+                            // 2. Total Purchase Cost (₹ for Qty)
                             OutlinedTextField(
                                 value = totalBuyStr,
                                 onValueChange = { newVal ->
@@ -2944,8 +3002,8 @@ fun AddEditItemSheet(
                                         unitBuyStr = ""
                                     }
                                 },
-                                label = { Text("Total Buy ($currencySymbol)", fontSize = 11.sp) },
-                                placeholder = { Text("0.00") },
+                                label = { Text("Total Purchase Cost ($currencySymbol)", fontSize = 11.sp) },
+                                placeholder = { Text("0") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
@@ -2956,15 +3014,16 @@ fun AddEditItemSheet(
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
                                 ),
                                 modifier = Modifier
-                                    .weight(1.1f)
+                                    .weight(1f)
                                     .focusRequester(totalBuyFocusRequester)
                                     .testTag("rate_item_buy_rate_input")
                             )
                         }
                     }
 
-                    // Live Profit & Margin Badge
+                    // Live Profit, Markup & Margin Badge (#7: explicitly labels both Markup and Margin)
                     if (parsedSell > 0 && parsedUnitBuy > 0) {
+                        val markupAndMarginLabel = com.example.feature.items.ItemsViewModel.formatMarkupAndMargin(parsedUnitBuy, parsedSell)
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (liveProfit >= 0) CreditGreen.copy(alpha = 0.12f) else DebitRed.copy(alpha = 0.12f),
@@ -2974,42 +3033,47 @@ fun AddEditItemSheet(
                             ),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = if (liveProfit >= 0) Icons.Default.TrendingUp else Icons.Default.TrendingDown,
-                                        contentDescription = null,
-                                        tint = if (liveProfit >= 0) CreditGreen else DebitRed,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Text(
-                                        text = "${if (liveProfit >= 0) "Profit" else "Loss"}: $currencySymbol${String.format(java.util.Locale.US, "%.2f", liveProfit)}/$unit",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (liveProfit >= 0) CreditGreen else DebitRed
-                                    )
-                                }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (liveProfit >= 0) Icons.Default.TrendingUp else Icons.Default.TrendingDown,
+                                            contentDescription = null,
+                                            tint = if (liveProfit >= 0) CreditGreen else DebitRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = "${if (liveProfit >= 0) "Profit" else "Loss"}: ${Formatters.formatCurrency(Math.abs(liveProfit), currencySymbol)}/$unit",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (liveProfit >= 0) CreditGreen else DebitRed
+                                        )
+                                    }
 
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (liveProfit >= 0) CreditGreen else DebitRed
-                                ) {
-                                    Text(
-                                        text = "${if (liveProfit >= 0) "+" else ""}${String.format(java.util.Locale.US, "%.1f", liveMarginPct)}%",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (liveProfit >= 0) CreditGreen else DebitRed
+                                    ) {
+                                        Text(
+                                            text = markupAndMarginLabel,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3242,8 +3306,17 @@ fun AddEditItemSheet(
             }
 
             // ============================================================
-            // SECTION 4: BOTTOM ACTION BAR
+            // SECTION 4: BOTTOM ACTION BAR + INLINE DISABLED REASON (#37)
             // ============================================================
+            if (!isFormValid) {
+                Text(
+                    text = if (name.isBlank()) "Enter an item name to enable Save" else "Enter a valid selling price",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DebitRed,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3362,7 +3435,21 @@ fun PriceHistorySheet(
     }
 
     var historyList by remember(activeHistoryJson) {
-        mutableStateOf(parsePriceHistory(activeHistoryJson))
+        val raw = parsePriceHistory(activeHistoryJson)
+        // Filter out consecutive duplicate/unchanged price points (#36)
+        val deduplicated = raw.fold(emptyList<PricePoint>()) { acc, point ->
+            val prev = acc.lastOrNull()
+            if (prev != null &&
+                Math.abs(prev.buyRate - point.buyRate) < 0.005 &&
+                Math.abs(prev.sellPrice - point.sellPrice) < 0.005 &&
+                prev.sellPriceStr.trim() == point.sellPriceStr.trim()
+            ) {
+                acc
+            } else {
+                acc + point
+            }
+        }
+        mutableStateOf(deduplicated)
     }
 
     // Guarantee starting 1st entry is logged and saved if empty
@@ -3391,7 +3478,7 @@ fun PriceHistorySheet(
 
     var showAddPricePointDialog by remember { mutableStateOf(false) }
     var editingPricePointIndex by remember { mutableStateOf<Int?>(null) }
-    var isGraphExpanded by remember(item.id) { mutableStateOf(false) }
+    var isGraphExpanded by remember(item.id, historyList.size) { mutableStateOf(historyList.size >= 2) }
     val haptic = LocalHapticFeedback.current
     val isDark = isAppInDarkTheme()
 
@@ -3666,14 +3753,17 @@ fun PriceHistorySheet(
                                 }
 
                                 Column(horizontalAlignment = Alignment.End) {
+                                    val sellFormatted = point.sellPrice.takeIf { it > 0 }?.let {
+                                        Formatters.formatCurrency(it, currencySymbol)
+                                    } ?: "$currencySymbol${point.getDisplaySellPrice()}"
                                     Text(
-                                        text = "SELL: $currencySymbol${point.getDisplaySellPrice()}",
+                                        text = "SELL: $sellFormatted",
                                         style = MaterialTheme.typography.bodyLarge,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Text(
-                                        text = "Buy Cost: $currencySymbol${point.buyRate}",
+                                        text = "Buy Cost: ${Formatters.formatCurrency(point.buyRate, currencySymbol)}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

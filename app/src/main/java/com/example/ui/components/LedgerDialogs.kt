@@ -227,6 +227,7 @@ fun AddCustomerDialog(
     initialPartyType: String = CustomerEntity.PARTY_TYPE_CUSTOMER,
     currencySymbol: String = "₹",
     onDismiss: () -> Unit,
+    onConfirmWithArea: ((name: String, phone: String, businessName: String, partyType: String, notes: String, openingBalance: Double, area: String) -> Unit)? = null,
     onConfirm: (name: String, phone: String, businessName: String, partyType: String, notes: String, openingBalance: Double) -> Unit
 ) {
     BackHandler { onDismiss() }
@@ -243,6 +244,7 @@ fun AddCustomerDialog(
 
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
+    var area by remember { mutableStateOf("") }
     var businessName by remember { mutableStateOf("") }
     var partyType by remember { mutableStateOf(initialPartyType) }
     var openingBalanceText by remember { mutableStateOf("") }
@@ -289,7 +291,11 @@ fun AddCustomerDialog(
         focusManager.clearFocus()
         keyboardController?.hide()
         val parsedBal = openingBalanceText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0
-        onConfirm(name.trim(), phone.trim(), businessName.trim(), partyType, notes.trim(), parsedBal)
+        if (onConfirmWithArea != null) {
+            onConfirmWithArea(name.trim(), phone.trim(), businessName.trim(), partyType, notes.trim(), parsedBal, area.trim())
+        } else {
+            onConfirm(name.trim(), phone.trim(), businessName.trim(), partyType, notes.trim(), parsedBal)
+        }
         onDismiss()
     }
 
@@ -429,6 +435,18 @@ fun AddCustomerDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next)
                     )
 
+                    // Area / Village (#26)
+                    LedgerOutlinedTextField(
+                        value = area,
+                        onValueChange = { area = it },
+                        label = { Text("Area / Village (e.g. Hisampur, Kekri)") },
+                        leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
+                    )
+
                     // Shop Name
                     LedgerOutlinedTextField(
                         value = businessName,
@@ -454,6 +472,16 @@ fun AddCustomerDialog(
                         keyboardActions = KeyboardActions(onDone = { handleSave() })
                     )
                 }
+            }
+
+            // Inline validation explanation when Save is disabled (#37)
+            if (name.isBlank() && businessName.isBlank()) {
+                Text(
+                    text = "Enter a customer name to enable Save Customer",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DebitRed,
+                    fontWeight = FontWeight.Medium
+                )
             }
 
             // PRIMARY ACTION BUTTON
@@ -2328,6 +2356,7 @@ fun EditCustomerDialog(
 
     var name by remember { mutableStateOf(customer.name) }
     var phone by remember { mutableStateOf(customer.phone) }
+    var area by remember { mutableStateOf(customer.area) }
     var businessName by remember { mutableStateOf(customer.businessName) }
     var notes by remember { mutableStateOf(customer.notes) }
     var isSubmitted by remember { mutableStateOf(false) }
@@ -2337,6 +2366,7 @@ fun EditCustomerDialog(
             val updated = customer.copy(
                 name = name.ifBlank { businessName },
                 phone = phone,
+                area = area.trim(),
                 businessName = businessName,
                 notes = notes
             )
@@ -2509,6 +2539,16 @@ fun EditCustomerDialog(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next)
+                        )
+
+                        LedgerOutlinedTextField(
+                            value = area,
+                            onValueChange = { area = it },
+                            label = { Text("Area / Village (e.g. Hisampur, Kekri)") },
+                            leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next)
                         )
 
                         LedgerOutlinedTextField(

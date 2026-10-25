@@ -360,11 +360,24 @@ class LedgerRepository(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        val latest = list.firstOrNull()
+        val cleanSellStr = sellPriceStr.trim()
+        if (latest != null) {
+            val prevBuy = latest.optDouble("buyRate", -1.0)
+            val prevSell = latest.optDouble("sellPrice", -1.0)
+            val prevSellStr = latest.optString("sellPriceStr", "").trim()
+            if (kotlin.math.abs(prevBuy - buyRate) < 0.005 &&
+                kotlin.math.abs(prevSell - sellPrice) < 0.005 &&
+                (prevSellStr == cleanSellStr || (prevSellStr.isBlank() && cleanSellStr.isBlank()))
+            ) {
+                return existingJson
+            }
+        }
         val newObj = JSONObject().apply {
             put("date", timestamp)
             put("buyRate", buyRate)
             put("sellPrice", sellPrice)
-            put("sellPriceStr", sellPriceStr)
+            put("sellPriceStr", cleanSellStr)
         }
         list.add(0, newObj)
         val resultArr = JSONArray()
@@ -375,6 +388,15 @@ class LedgerRepository(
     suspend fun ensureStartingEntriesForRateItems() {
         withContext(Dispatchers.IO) {
             try {
+                // Purge placeholder test invoices named "x" or "y"
+                val existingInvoices = dao.getAllInvoices().first()
+                for (inv in existingInvoices) {
+                    val cleanCust = inv.customerName.trim().lowercase(Locale.US)
+                    if (cleanCust == "x" || cleanCust == "y" || cleanCust.startsWith("x (") || cleanCust.startsWith("y (")) {
+                        dao.deleteInvoice(inv)
+                    }
+                }
+
                 val allItems = dao.getAllRateItemsList()
                 for (item in allItems) {
                     val hasHistoryJson = item.priceHistoryJson.isNotBlank() && item.priceHistoryJson != "[]"
@@ -452,8 +474,17 @@ class LedgerRepository(
     suspend fun updateRateItem(item: RateItemEntity) {
         withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()
+            val prevItem = dao.getRateItemById(item.id)
+            val priceChanged = prevItem == null ||
+                kotlin.math.abs(prevItem.buyRate - item.buyRate) >= 0.005 ||
+                kotlin.math.abs(prevItem.sellPrice - item.sellPrice) >= 0.005 ||
+                prevItem.sellPriceStr.trim() != item.sellPriceStr.trim()
             val (minP, maxP) = RateItemEntity.computeMinMax(item.sellPrice, item.sellPriceStr)
-            val historyJson = appendPriceHistoryJson(item.priceHistoryJson, item.buyRate, item.sellPrice, item.sellPriceStr, now)
+            val historyJson = if (priceChanged) {
+                appendPriceHistoryJson(item.priceHistoryJson, item.buyRate, item.sellPrice, item.sellPriceStr, now)
+            } else {
+                item.priceHistoryJson
+            }
             val updated = item.copy(
                 minSellPrice = minP,
                 maxSellPrice = maxP,
@@ -461,16 +492,17 @@ class LedgerRepository(
                 lastUpdated = now
             )
             dao.updateRateItem(updated)
-            // Log to price history table
-            dao.insertPriceHistory(
-                PriceHistoryEntity(
-                    itemId = item.id,
-                    buyRate = item.buyRate,
-                    sellPrice = item.sellPrice,
-                    sellPriceStr = item.sellPriceStr,
-                    timestamp = now
+            if (priceChanged) {
+                dao.insertPriceHistory(
+                    PriceHistoryEntity(
+                        itemId = item.id,
+                        buyRate = item.buyRate,
+                        sellPrice = item.sellPrice,
+                        sellPriceStr = item.sellPriceStr,
+                        timestamp = now
+                    )
                 )
-            )
+            }
             syncManager?.pushRateItem(updated)
         }
     }

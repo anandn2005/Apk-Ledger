@@ -719,7 +719,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         businessName: String,
         partyType: String,
         notes: String,
-        openingBalance: Double = 0.0
+        openingBalance: Double = 0.0,
+        area: String = ""
     ) {
         if (name.isBlank() && businessName.isBlank()) return
         viewModelScope.launch {
@@ -727,11 +728,12 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             repository.insertCustomer(
                 CustomerEntity(
                     id = customerId,
-                    name = name.ifBlank { businessName },
-                    phone = phone,
-                    businessName = businessName,
+                    name = name.ifBlank { businessName }.trim(),
+                    phone = phone.trim(),
+                    businessName = businessName.trim(),
                     partyType = partyType,
-                    notes = notes
+                    notes = notes.trim(),
+                    area = area.trim()
                 )
             )
             if (openingBalance > 0.0) {
@@ -750,12 +752,17 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
             }
-            _userMessage.value = "Added successfully"
+            _userMessage.value = "Added customer ${name.ifBlank { businessName }.trim()}"
         }
     }
 
     fun deleteCustomer(id: String) {
         viewModelScope.launch {
+            val cust = repository.getCustomerById(id)
+            val txns = repository.getTransactionsForCustomer(id).first()
+            if (cust != null) {
+                lastDeletedSnapshot = DeletedRecordSnapshot.Customers(listOf(cust to txns))
+            }
             repository.deleteCustomerWithData(id)
             if (_selectedCustomerId.value == id) {
                 _selectedCustomerId.value = null
@@ -799,7 +806,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                     date = dateTimestamp
                 )
             )
-            _userMessage.value = if (type == TransactionType.GAVE_CREDIT.name) "Credit entry recorded" else "Payment entry recorded"
+            _userMessage.value = if (type == TransactionType.GAVE_CREDIT.name) "Sale on credit recorded" else "Payment received recorded"
         }
     }
 
@@ -811,13 +818,15 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteTransaction(transaction: TransactionEntity) {
+        lastDeletedSnapshot = DeletedRecordSnapshot.Transactions(listOf(transaction))
         viewModelScope.launch {
             repository.deleteTransaction(transaction)
-            _userMessage.value = "Transaction removed"
+            _userMessage.value = "Transaction deleted"
         }
     }
 
     fun deleteSelectedTransactions(transactions: List<TransactionEntity>) {
+        lastDeletedSnapshot = DeletedRecordSnapshot.Transactions(transactions)
         viewModelScope.launch {
             repository.deleteTransactions(transactions)
             _userMessage.value = "${transactions.size} transaction(s) deleted"
@@ -826,6 +835,16 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteSelectedCustomers(ids: Set<String>) {
         viewModelScope.launch {
+            val snapshots = ids.mapNotNull { id ->
+                val cust = repository.getCustomerById(id)
+                if (cust != null) {
+                    val txns = repository.getTransactionsForCustomer(id).first()
+                    cust to txns
+                } else null
+            }
+            if (snapshots.isNotEmpty()) {
+                lastDeletedSnapshot = DeletedRecordSnapshot.Customers(snapshots)
+            }
             repository.deleteCustomers(ids)
             _userMessage.value = "${ids.size} customer(s) deleted"
         }
@@ -965,16 +984,18 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun deleteInvoice(invoice: InvoiceEntity) {
+        lastDeletedSnapshot = DeletedRecordSnapshot.Invoices(listOf(invoice))
         viewModelScope.launch {
             repository.deleteInvoice(invoice)
-            _userMessage.value = "Invoice deleted"
+            _userMessage.value = "Receipt #${invoice.invoiceNumber} deleted"
         }
     }
 
     fun deleteSelectedInvoices(invoices: List<InvoiceEntity>) {
+        lastDeletedSnapshot = DeletedRecordSnapshot.Invoices(invoices)
         viewModelScope.launch {
             repository.deleteInvoices(invoices)
-            _userMessage.value = "${invoices.size} invoice(s) deleted"
+            _userMessage.value = "${invoices.size} receipt(s) deleted"
         }
     }
 
@@ -1191,17 +1212,49 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private var lastDeletedRateItems: List<RateItemEntity>? = null
+    private sealed interface DeletedRecordSnapshot {
+        data class Customers(val items: List<Pair<CustomerEntity, List<TransactionEntity>>>) : DeletedRecordSnapshot
+        data class Transactions(val items: List<TransactionEntity>) : DeletedRecordSnapshot
+        data class Invoices(val items: List<InvoiceEntity>) : DeletedRecordSnapshot
+    }
 
-    fun canUndo(): Boolean = !lastDeletedRateItems.isNullOrEmpty()
+    private var lastDeletedRateItems: List<RateItemEntity>? = null
+    private var lastDeletedSnapshot: DeletedRecordSnapshot? = null
+
+    fun canUndo(): Boolean = !lastDeletedRateItems.isNullOrEmpty() || lastDeletedSnapshot != null
 
     fun undoLastDelete() {
-        val items = lastDeletedRateItems ?: return
-        lastDeletedRateItems = null
-        restoreRateItems(items)
+        val rateItems = lastDeletedRateItems
+        if (!rateItems.isNullOrEmpty()) {
+            lastDeletedRateItems = null
+            restoreRateItems(rateItems)
+            return
+        }
+        val snapshot = lastDeletedSnapshot ?: return
+        lastDeletedSnapshot = null
+        viewModelScope.launch {
+            when (snapshot) {
+                is DeletedRecordSnapshot.Customers -> {
+                    snapshot.items.forEach { (cust, txns) ->
+                        repository.insertCustomer(cust)
+                        txns.forEach { repository.insertTransaction(it) }
+                    }
+                    _userMessage.value = "Restored ${snapshot.items.size} customer(s)"
+                }
+                is DeletedRecordSnapshot.Transactions -> {
+                    snapshot.items.forEach { repository.insertTransaction(it) }
+                    _userMessage.value = "Restored ${snapshot.items.size} transaction(s)"
+                }
+                is DeletedRecordSnapshot.Invoices -> {
+                    snapshot.items.forEach { repository.insertInvoice(it) }
+                    _userMessage.value = "Restored ${snapshot.items.size} receipt(s)"
+                }
+            }
+        }
     }
 
     fun deleteRateItem(item: RateItemEntity) {
+        lastDeletedSnapshot = null
         lastDeletedRateItems = listOf(item)
         viewModelScope.launch {
             repository.deleteRateItem(item)
@@ -1211,6 +1264,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun bulkDeleteRateItems(ids: List<String>) {
+        lastDeletedSnapshot = null
         lastDeletedRateItems = uiState.value.rateItems.filter { ids.contains(it.id) }
         viewModelScope.launch {
             repository.bulkDeleteRateItems(ids)

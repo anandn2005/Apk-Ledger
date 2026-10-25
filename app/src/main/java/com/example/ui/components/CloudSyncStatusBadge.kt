@@ -125,20 +125,12 @@ fun CloudSyncStatusBadge(
                         }
                     }
                     SyncStatus.SYNCED -> {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(
-                                imageVector = Icons.Default.CloudDone,
-                                contentDescription = "Cloud synced",
-                                tint = iconColor,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Synced",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = iconColor
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.CloudDone,
+                            contentDescription = "Cloud synced",
+                            tint = iconColor,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                     SyncStatus.OFFLINE -> {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

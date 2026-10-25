@@ -453,7 +453,7 @@ fun LedgerApp(
                                                 isSpeedDialExpanded = !isSpeedDialExpanded
                                             }
                                             2 -> navController.navigate("receipt_generator_screen")
-                                            3 -> viewModel.toggleDarkMode()
+                                            3 -> showAddTransactionOrPersonSheet = true
                                         }
                                     }
                                 )
@@ -558,6 +558,10 @@ fun LedgerApp(
                         initialPartyType = partyTypeToAdd,
                         currencySymbol = state.currencySymbol,
                         onDismiss = { showAddCustomerDialog = false },
+                        onConfirmWithArea = { name, phone, businessName, partyType, notes, openingBalance, area ->
+                            viewModel.addCustomer(name, phone, businessName, partyType, notes, openingBalance, area)
+                            showAddCustomerDialog = false
+                        },
                         onConfirm = { name, phone, businessName, partyType, notes, openingBalance ->
                             viewModel.addCustomer(name, phone, businessName, partyType, notes, openingBalance)
                             showAddCustomerDialog = false
