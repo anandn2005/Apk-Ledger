@@ -139,3 +139,47 @@ dependencies {
   // "ksp"(libs.moshi.kotlin.codegen)
   // "ksp"(libs.hilt.compiler)
 }
+
+class KspAwtGuardAction : org.gradle.api.Action<org.gradle.api.Task> {
+  override fun execute(task: org.gradle.api.Task) {
+    Companion.install()
+  }
+
+  companion object {
+    fun install() {
+      val currentHandler = Thread.getDefaultUncaughtExceptionHandler()
+      if (currentHandler == null || !currentHandler.toString().contains("KspAwtExceptionGuard")) {
+        val delegate = currentHandler
+        Thread.setDefaultUncaughtExceptionHandler(
+          object : Thread.UncaughtExceptionHandler {
+            override fun uncaughtException(t: Thread, e: Throwable) {
+              val isKspAwtNpe =
+                t.name.startsWith("AWT-EventQueue") &&
+                  e is NullPointerException &&
+                  (e.message?.contains("ksp.com.intellij.openapi.application.Application") == true ||
+                    e.stackTrace.any { it.className.startsWith("ksp.com.intellij.") })
+              if (isKspAwtNpe) {
+                return
+              }
+              if (delegate != null) {
+                delegate.uncaughtException(t, e)
+              } else {
+                System.err.print("Exception in thread \"" + t.name + "\" ")
+                e.printStackTrace(System.err)
+              }
+            }
+
+            override fun toString(): String = "KspAwtExceptionGuard"
+          }
+        )
+      }
+    }
+  }
+}
+
+KspAwtGuardAction.install()
+
+tasks.matching { it.name.startsWith("ksp") }.configureEach {
+  doFirst(KspAwtGuardAction())
+}
+
