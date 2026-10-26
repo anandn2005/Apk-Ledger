@@ -6,4 +6,5 @@
     <string name="shortcut_add_deposit_long">Record Payment Received</string>
     <string name="shortcut_view_today_short">View Today</string>
     <string name="shortcut_view_today_long">Open Today\'s Ledger Entries</string>
+    <string name="default_web_client_id" translatable="false">712978117654-l69391q08rvdiic04lrq7p3eaoe65agj.apps.googleusercontent.com</string>
 </resources>

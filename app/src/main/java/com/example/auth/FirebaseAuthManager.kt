@@ -117,9 +117,10 @@ class FirebaseAuthManager(
     private fun resolveWebClientId(): String? {
         return try {
             context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+                ?: DEFAULT_WEB_CLIENT_ID
         } catch (e: Exception) {
-            Log.w(TAG, "default_web_client_id resource not found: ${e.message}")
-            null
+            Log.w(TAG, "default_web_client_id resource not found, using configured Web Client ID: ${e.message}")
+            DEFAULT_WEB_CLIENT_ID
         }
     }
 
@@ -381,6 +382,7 @@ class FirebaseAuthManager(
     companion object {
         const val FIREBASE_PROJECT_ID = "ledger--mate"
         const val FIREBASE_PROJECT_NUMBER = "712978117654"
+        const val DEFAULT_WEB_CLIENT_ID = "712978117654-l69391q08rvdiic04lrq7p3eaoe65agj.apps.googleusercontent.com"
 
         suspend fun <T> awaitTask(block: () -> com.google.android.gms.tasks.Task<T>): T =
             suspendCancellableCoroutine { continuation ->

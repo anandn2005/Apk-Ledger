@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "712978117654",
+    "project_id": "ledger--mate",
+    "storage_bucket": "ledger--mate.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:712978117654:android:0d1edcac25ad1a7252b137",
+        "android_client_info": {
+          "package_name": "com.aistudio.ledgermate.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "712978117654-jgn6ofnk39eflvjqqme7dgm2m4815so8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.ledgermate.app",
+            "certificate_hash": "5ae358b8ef58d517ed1c7434e6ab55bcbef9eecc"
+          }
+        },
+        {
+          "client_id": "712978117654-l69391q08rvdiic04lrq7p3eaoe65agj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDi5m9Y2VMjj1Ft7SptYYOuxrfSTIGJ-gs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "712978117654-l69391q08rvdiic04lrq7p3eaoe65agj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
