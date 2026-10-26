@@ -4,6 +4,7 @@ import android.app.DatePickerDialog
 import android.content.Context
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -11,6 +12,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,6 +53,7 @@ import com.example.ui.components.CloudSyncStatusBadge
 import com.example.ui.components.IosScrollbarPill
 import com.example.ui.components.PremiumEmptyState
 import com.example.ui.components.ScrollEdgeShadow
+import com.example.ui.components.pressScale
 import com.example.ui.components.rememberCanScrollBack
 import com.example.ui.i18n.AppStrings
 import com.example.ui.i18n.LocalAppLanguage
@@ -195,43 +198,10 @@ fun CustomersScreen(
         }
     }
 
-    var isHeaderVisible by remember { mutableStateOf(true) }
-
+    // Keep header height stable during scroll to prevent mid-fling Scaffold/LazyColumn re-measurement
+    val isHeaderVisible = true
     val pullToRevealConnection = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val deltaY = available.y
-                if (deltaY < -10f) {
-                    val isScrolled = if (viewMode == "DATE_WISE") {
-                        dateListState.firstVisibleItemIndex > 0 || dateListState.firstVisibleItemScrollOffset > 25
-                    } else {
-                        listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 25
-                    }
-                    if (isScrolled && isHeaderVisible) {
-                        isHeaderVisible = false
-                    }
-                } else if (deltaY > 10f) {
-                    if (!isHeaderVisible) {
-                        isHeaderVisible = true
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    LaunchedEffect(listState, dateListState, viewMode) {
-        androidx.compose.runtime.snapshotFlow {
-            if (viewMode == "DATE_WISE") {
-                dateListState.firstVisibleItemIndex == 0 && dateListState.firstVisibleItemScrollOffset <= 10
-            } else {
-                listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= 10
-            }
-        }.distinctUntilChanged().collect { atTop ->
-            if (atTop) {
-                isHeaderVisible = true
-            }
-        }
+        object : NestedScrollConnection {}
     }
 
     Scaffold(
@@ -366,7 +336,7 @@ fun CustomersScreen(
                             Spacer(modifier = Modifier.height(8.dp))
 
                             // ============================================================
-                            // 1) iOS-STYLE SEGMENTED CONTROL: All Customers vs Date-wise
+                            // 1) LIQUID SPRING SEGMENTED CONTROL: All Customers vs Date-wise
                             // ============================================================
                             val isDark = isAppInDarkTheme()
                             val trackBg = if (isDark) Color(0xFF1C1C1E) else Color(0xFFF2F2F7)
@@ -374,62 +344,91 @@ fun CustomersScreen(
                             val trackBorder = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
                             val isAllMode = viewMode == "ALL"
 
-                            Row(
+                            BoxWithConstraints(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(40.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(trackBg)
                                     .border(BorderStroke(1.dp, trackBorder), RoundedCornerShape(12.dp))
-                                    .padding(3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    .padding(3.dp)
                             ) {
+                                val segmentWidth = (maxWidth - 4.dp) / 2f
+                                val indicatorOffset by animateDpAsState(
+                                    targetValue = if (isAllMode) 0.dp else (segmentWidth + 4.dp),
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    label = "SegmentedPillSlide"
+                                )
+
+                                // Liquid Sliding Pill Background
                                 Surface(
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .clickable {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            viewMode = "ALL"
-                                        }
-                                        .testTag("toggle_all_customers_tab"),
+                                        .offset(x = indicatorOffset)
+                                        .width(segmentWidth)
+                                        .fillMaxHeight(),
                                     shape = RoundedCornerShape(9.dp),
-                                    color = if (isAllMode) activePillBg else Color.Transparent,
-                                    shadowElevation = if (isAllMode) 1.5.dp else 0.dp,
-                                    border = if (isAllMode && !isDark) BorderStroke(0.5.dp, Color(0x12000000)) else null
+                                    color = activePillBg,
+                                    shadowElevation = 2.dp,
+                                    border = if (!isDark) BorderStroke(0.5.dp, Color(0x14000000)) else null
+                                ) {}
+
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                    val allTextColor by animateColorAsState(
+                                        targetValue = if (isAllMode) AccentGreen else TextSecondary,
+                                        animationSpec = tween(180),
+                                        label = "AllTabTextColor"
+                                    )
+                                    val dateTextColor by animateColorAsState(
+                                        targetValue = if (!isAllMode) AccentGreen else TextSecondary,
+                                        animationSpec = tween(180),
+                                        label = "DateTabTextColor"
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .pressScale(targetScale = 0.96f)
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewMode = "ALL"
+                                            }
+                                            .testTag("toggle_all_customers_tab"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(
                                             text = AppStrings.allCustomers(currentLang),
                                             fontWeight = if (isAllMode) FontWeight.SemiBold else FontWeight.Medium,
                                             fontSize = 13.sp,
-                                            color = if (isAllMode) AccentGreen else TextSecondary
+                                            color = allTextColor
                                         )
                                     }
-                                }
 
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .clickable {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            viewMode = "DATE_WISE"
-                                        }
-                                        .testTag("toggle_date_wise_tab"),
-                                    shape = RoundedCornerShape(9.dp),
-                                    color = if (!isAllMode) activePillBg else Color.Transparent,
-                                    shadowElevation = if (!isAllMode) 1.5.dp else 0.dp,
-                                    border = if (!isAllMode && !isDark) BorderStroke(0.5.dp, Color(0x12000000)) else null
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .pressScale(targetScale = 0.96f)
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewMode = "DATE_WISE"
+                                            }
+                                            .testTag("toggle_date_wise_tab"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(
                                             text = AppStrings.dateWise(currentLang),
                                             fontWeight = if (!isAllMode) FontWeight.SemiBold else FontWeight.Medium,
                                             fontSize = 13.sp,
-                                            color = if (!isAllMode) AccentGreen else TextSecondary
+                                            color = dateTextColor
                                         )
                                     }
                                 }
@@ -499,7 +498,9 @@ fun CustomersScreen(
                                         if (selected) pillAccent.copy(alpha = 0.55f)
                                         else (if (isDarkFilter) Color(0xFF2C2C2E) else Color(0xFFE5E5EA))
                                     ),
-                                    modifier = Modifier.testTag("customer_filter_$key")
+                                    modifier = Modifier
+                                        .pressScale(targetScale = 0.94f)
+                                        .testTag("customer_filter_$key")
                                 ) {
                                     Text(
                                         text = label,
@@ -527,8 +528,11 @@ fun CustomersScreen(
                                 com.example.feature.customers.CustomerSortOption.OLDEST_DUE to "Oldest Due",
                                 com.example.feature.customers.CustomerSortOption.AREA to "By Area"
                             )
-                            items(sortOptions.size) { idx ->
-                                val (opt, label) = sortOptions[idx]
+                            items(
+                                items = sortOptions,
+                                key = { (opt, _) -> "sort_${opt.name}" },
+                                contentType = { "sort_chip" }
+                            ) { (opt, label) ->
                                 val isSortSelected = selectedSortOption == opt
                                 Surface(
                                     onClick = {
@@ -555,8 +559,11 @@ fun CustomersScreen(
                                 }
                             }
                             if (availableAreas.isNotEmpty()) {
-                                items(availableAreas.size) { areaIdx ->
-                                    val areaName = availableAreas[areaIdx]
+                                items(
+                                    items = availableAreas,
+                                    key = { areaName -> "area_$areaName" },
+                                    contentType = { "area_chip" }
+                                ) { areaName ->
                                     val isAreaSelected = selectedAreaFilter.equals(areaName, ignoreCase = true)
                                     Surface(
                                         onClick = {
@@ -853,11 +860,27 @@ fun CustomersScreen(
                         items(
                             items = dateTransactions,
                             key = { it.id },
-                            contentType = { "date_transaction_item" }
+                            contentType = { txn ->
+                                if (txn.type == TransactionType.GAVE_CREDIT.name || txn.type == TransactionType.INVOICE_BILL.name) {
+                                    "date_txn_credit"
+                                } else {
+                                    "date_txn_payment"
+                                }
+                            }
                         ) { txn ->
                             val custName = customerMap[txn.customerId] ?: "Customer"
                             val isCredit = txn.type == TransactionType.GAVE_CREDIT.name || txn.type == TransactionType.INVOICE_BILL.name
                             val isDark = isAppInDarkTheme()
+                            val formattedTime = remember(txn.date) { formatTimeLabel(txn.date) }
+                            val formattedAmount = remember(txn.amount, state.currencySymbol) {
+                                Formatters.formatCurrency(txn.amount, state.currencySymbol)
+                            }
+                            val subtitleMeta = remember(txn.description, txn.invoiceRef) {
+                                listOfNotNull(
+                                    txn.description.takeIf { it.isNotBlank() },
+                                    txn.invoiceRef.takeIf { it.isNotBlank() }?.let { "#$it" }
+                                ).joinToString(" • ")
+                            }
 
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
@@ -867,7 +890,7 @@ fun CustomersScreen(
                                     .fillMaxWidth()
                                     .defaultMinSize(minHeight = 74.dp)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .springPressable { onSelectCustomer(txn.customerId) }
+                                    .clickable { onSelectCustomer(txn.customerId) }
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -916,7 +939,7 @@ fun CustomersScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Text(
-                                                    text = formatTimeLabel(txn.date),
+                                                    text = formattedTime,
                                                     fontSize = 12.sp,
                                                     color = TextSecondary
                                                 )
@@ -937,12 +960,9 @@ fun CustomersScreen(
                                                 }
                                             }
 
-                                            if (txn.description.isNotBlank() || txn.invoiceRef.isNotBlank()) {
+                                            if (subtitleMeta.isNotBlank()) {
                                                 Text(
-                                                    text = listOfNotNull(
-                                                        txn.description.takeIf { it.isNotBlank() },
-                                                        txn.invoiceRef.takeIf { it.isNotBlank() }?.let { "#$it" }
-                                                    ).joinToString(" • "),
+                                                    text = subtitleMeta,
                                                     fontSize = 11.sp,
                                                     color = TextSecondary,
                                                     maxLines = 1,
@@ -958,7 +978,7 @@ fun CustomersScreen(
                                         modifier = Modifier.wrapContentWidth(Alignment.End)
                                     ) {
                                         Text(
-                                            text = Formatters.formatCurrency(txn.amount, state.currencySymbol),
+                                            text = formattedAmount,
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.Bold,
                                             textAlign = TextAlign.End,
@@ -1037,7 +1057,13 @@ fun CustomersScreen(
                         items(
                             items = displayedCustomers,
                             key = { it.customer.id },
-                            contentType = { "customer_card_item" }
+                            contentType = { item ->
+                                when {
+                                    item.netBalance > 0.0 -> "customer_owed"
+                                    item.netBalance < 0.0 -> "customer_advance"
+                                    else -> "customer_settled"
+                                }
+                            }
                         ) { item ->
                             val isSelected = selectedIds.contains(item.customer.id)
                             val isPinned = state.pinnedCustomerIds.contains(item.customer.id)
@@ -1116,6 +1142,7 @@ fun CustomersScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CustomerCardItem(
     item: CustomerWithBalance,
@@ -1132,6 +1159,25 @@ private fun CustomerCardItem(
     val isDark = isAppInDarkTheme()
     val currentLang = LocalAppLanguage.current
 
+    val (avatarBg, avatarFg) = remember(cust.name, isDark) {
+        com.example.feature.customers.CustomersViewModel.avatarColorsForName(cust.name, isDark)
+    }
+    val avatarInitial = remember(cust.name) {
+        cust.name.trim().take(1).uppercase().ifBlank { "C" }
+    }
+    val ageDays = remember(item.oldestDueDate, item.lastTransactionDate, item.netBalance) {
+        com.example.feature.customers.CustomersViewModel.computeAgeingDays(item)
+    }
+    val isOverdue = isOwed && ageDays >= 30
+    val metaParts = remember(cust.businessName, cust.phone, item.lastTransactionDate, isOverdue) {
+        val lastActivityText = Formatters.formatRelativeDateOrAge(item.lastTransactionDate ?: 0L)
+        buildList {
+            cust.businessName.takeIf { it.isNotBlank() }?.let { add(it) }
+            cust.phone.takeIf { it.isNotBlank() }?.let { add(it) }
+            if (!isOverdue && lastActivityText.isNotBlank()) add(lastActivityText)
+        }.joinToString(" • ")
+    }
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = if (isSelected) {
@@ -1147,7 +1193,10 @@ private fun CustomerCardItem(
             .fillMaxWidth()
             .defaultMinSize(minHeight = 74.dp)
             .clip(RoundedCornerShape(14.dp))
-            .springPressable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
     ) {
         Row(
             modifier = Modifier
@@ -1165,7 +1214,6 @@ private fun CustomerCardItem(
                     .padding(end = 12.dp)
             ) {
                 // Deterministic multi-color 44dp Avatar Circle (#5)
-                val (avatarBg, avatarFg) = com.example.feature.customers.CustomersViewModel.avatarColorsForName(cust.name, isDark)
                 Surface(
                     shape = CircleShape,
                     color = avatarBg,
@@ -1174,7 +1222,7 @@ private fun CustomerCardItem(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = cust.name.trim().take(1).uppercase().ifBlank { "C" },
+                            text = avatarInitial,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = avatarFg
@@ -1226,15 +1274,6 @@ private fun CustomerCardItem(
                             )
                         }
                     }
-
-                    val ageDays = com.example.feature.customers.CustomersViewModel.computeAgeingDays(item)
-                    val isOverdue = isOwed && ageDays >= 30
-                    val lastActivityText = Formatters.formatRelativeDateOrAge(item.lastTransactionDate ?: 0L)
-                    val metaParts = buildList {
-                        cust.businessName.takeIf { it.isNotBlank() }?.let { add(it) }
-                        cust.phone.takeIf { it.isNotBlank() }?.let { add(it) }
-                        if (!isOverdue && lastActivityText.isNotBlank()) add(lastActivityText)
-                    }.joinToString(" • ")
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

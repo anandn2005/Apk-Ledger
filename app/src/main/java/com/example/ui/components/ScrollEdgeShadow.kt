@@ -22,9 +22,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+import androidx.compose.ui.graphics.graphicsLayer
+
 /**
- * Renders a soft, premium gradient shadow blur overlay when a LazyColumn or Scrollable
- * is scrolled, preventing harsh visual cutoffs at the boundaries.
+ * Renders a soft, static gradient shadow overlay when a LazyColumn or Scrollable
+ * is scrolled, using memoized Brush and GPU graphicsLayer alpha to avoid recomposition churn.
  */
 @Composable
 fun ScrollEdgeShadow(
@@ -34,13 +36,13 @@ fun ScrollEdgeShadow(
     shadowHeight: Dp = 16.dp,
     baseColor: Color = MaterialTheme.colorScheme.background
 ) {
-    val alpha by animateFloatAsState(
+    val shadowAlpha by animateFloatAsState(
         targetValue = if (isScrolled) 1f else 0f,
         animationSpec = tween(durationMillis = 220),
         label = "ScrollShadowAlpha"
     )
 
-    if (alpha > 0.01f) {
+    val gradientBrush = remember(isTop, baseColor) {
         val gradientColors = if (isTop) {
             listOf(
                 baseColor.copy(alpha = 0.95f),
@@ -56,13 +58,16 @@ fun ScrollEdgeShadow(
                 baseColor.copy(alpha = 0.95f)
             )
         }
+        Brush.verticalGradient(colors = gradientColors)
+    }
 
+    if (shadowAlpha > 0.01f) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
                 .height(shadowHeight)
-                .alpha(alpha)
-                .background(Brush.verticalGradient(colors = gradientColors))
+                .graphicsLayer { alpha = shadowAlpha }
+                .background(gradientBrush)
         )
     }
 }

@@ -276,12 +276,13 @@ fun CustomerDetailScreen(
                 Surface(
                     tonalElevation = 8.dp,
                     shadowElevation = 8.dp,
-                    color = MaterialTheme.colorScheme.surface
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.navigationBarsPadding()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         Button(
@@ -345,7 +346,7 @@ fun CustomerDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
             // Balance Card
-            item {
+            item(key = "customer_balance_header", contentType = "balance_header") {
                 val isDark = isAppInDarkTheme()
                 val cardBg = when {
                     netBalance > 0 -> if (isDark) StatusEmeraldDarkBg else StatusEmeraldLight
@@ -517,7 +518,7 @@ fun CustomerDetailScreen(
                 }
             }
 
-            item {
+            item(key = "transactions_section_header", contentType = "section_header") {
                 Text(
                     text = "Transactions",
                     style = MaterialTheme.typography.titleMedium,
@@ -527,7 +528,7 @@ fun CustomerDetailScreen(
             }
 
             if (transactions.isEmpty()) {
-                item {
+                item(key = "transactions_empty_state", contentType = "empty_state") {
                     PremiumEmptyState(
                         title = "No collections logged for this period.",
                         subtitle = "Swipe from the bottom or tap below to record a sale or payment.",
@@ -538,7 +539,13 @@ fun CustomerDetailScreen(
                 items(
                     items = transactions,
                     key = { it.id },
-                    contentType = { "customer_transaction_item" }
+                    contentType = { txn ->
+                        if (txn.type == TransactionType.GAVE_CREDIT.name || txn.type == TransactionType.INVOICE_BILL.name) {
+                            "customer_txn_credit"
+                        } else {
+                            "customer_txn_payment"
+                        }
+                    }
                 ) { txn ->
                     val isSelected = selectedTxnIds.contains(txn.id)
                     val assocInvoice = invoicesMap[txn.invoiceRef]
@@ -580,7 +587,9 @@ fun CustomerDetailScreen(
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(24.dp)) }
+            item(key = "transactions_bottom_spacer", contentType = "bottom_spacer") {
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
 
         ScrollEdgeShadow(
@@ -799,9 +808,12 @@ fun SwipeableTransactionItemCard(
                         }
                     }
 
-                    // Row 2: Date & Time
+                    // Row 2: Date & Time (memoized to prevent per-frame DateFormat allocations)
+                    val formattedDateTime = remember(txn.date) {
+                        "${Formatters.formatDate(txn.date)} • ${Formatters.formatTime(txn.date)}"
+                    }
                     Text(
-                        text = "${Formatters.formatDate(txn.date)} • ${Formatters.formatTime(txn.date)}",
+                        text = formattedDateTime,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -906,8 +918,11 @@ fun SwipeableTransactionItemCard(
                 // Amount Column (Right side) - Strict Tabular Financial Typography
                 Column(horizontalAlignment = Alignment.End) {
                     val displayPrefix = if (isSettledPaid) "" else if (isGaveCredit) "- " else "+ "
+                    val formattedAmount = remember(txn.amount, currencySymbol, displayPrefix) {
+                        displayPrefix + Formatters.formatCurrency(txn.amount, currencySymbol)
+                    }
                     Text(
-                        text = displayPrefix + Formatters.formatCurrency(txn.amount, currencySymbol),
+                        text = formattedAmount,
                         style = MaterialTheme.typography.titleMedium.tabularNumbers(),
                         fontWeight = FontWeight.ExtraBold,
                         color = if (isSettledPaid) CreditGreen else if (isGaveCredit) DebitRed else CreditGreen

@@ -39,7 +39,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -86,8 +85,11 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.PeopleOutline
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.CompositingStrategy
 import com.example.ui.theme.SpringMotion
 
+@Immutable
 data class NavigationTabItem(
     val title: String,
     val outlinedIcon: ImageVector,
@@ -98,6 +100,7 @@ data class NavigationTabItem(
 /**
  * Premium Floating Navigation Container combining the pill-shaped tab menu
  * with an active "Ball Movement" indicator and a contextual Floating Action Button (+).
+ * Isolated in its own offscreen hardware layer so scrolling lists underneath never trigger dock re-renders.
  */
 @Composable
 fun FloatingPillNavigation(
@@ -112,7 +115,10 @@ fun FloatingPillNavigation(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(bottom = 12.dp, start = 12.dp, end = 12.dp),
+            .padding(bottom = 12.dp, start = 12.dp, end = 12.dp)
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+            },
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -126,8 +132,7 @@ fun FloatingPillNavigation(
                 isDarkMode = isDarkMode
             )
 
-            // Contextual Action Button (+) - always visible across all tabs;
-            // morphs into Dark Mode / Light Mode toggle in Settings tab (tab 3)
+            // Contextual Action Button (+) - always visible across all tabs
             ContextualActionFab(
                 activeTab = selectedTab,
                 isDarkMode = isDarkMode,
@@ -139,8 +144,8 @@ fun FloatingPillNavigation(
 }
 
 /**
- * Apple-Style Liquid Glassmorphic Dock with Dynamic Active Label Expansion,
- * Reflective Specular Rim, and iOS Spring Physics.
+ * High-Performance Frosted Translucent Dock with Dynamic Active Label Expansion,
+ * Reflective Specular Rim, Static Diffuse Shadow, and Offscreen Hardware Layer Isolation.
  */
 @Composable
 fun FloatingPillNavigationBar(
@@ -184,46 +189,50 @@ fun FloatingPillNavigationBar(
         }
     }
 
-    // Reflective Specular Rim: Fine 1.dp gradient border
-    val specularRimBorder = BorderStroke(
-        width = 1.dp,
-        brush = Brush.verticalGradient(
-            colors = if (darkActive) {
-                listOf(
-                    Color.White.copy(alpha = 0.30f),
-                    Color.White.copy(alpha = 0.10f)
-                )
-            } else {
-                listOf(
-                    Color.White.copy(alpha = 0.80f),
-                    Color.White.copy(alpha = 0.25f)
-                )
-            }
+    // Reflective Specular Rim: Fine 1.dp gradient border memoized by theme
+    val specularRimBorder = remember(darkActive) {
+        BorderStroke(
+            width = 1.dp,
+            brush = Brush.verticalGradient(
+                colors = if (darkActive) {
+                    listOf(
+                        Color.White.copy(alpha = 0.28f),
+                        Color.White.copy(alpha = 0.08f)
+                    )
+                } else {
+                    listOf(
+                        Color.White.copy(alpha = 0.85f),
+                        Color.White.copy(alpha = 0.30f)
+                    )
+                }
+            )
         )
-    )
+    }
 
-    // Frosted / opaque surface tint so list rows underneath do not bleed through (#1)
+    // High-performance frosted translucent color overlay (Color(0xF2FFFFFF) Light / Color(0xF0121212) Dark)
+    // with static diffuse shadow — zero dynamic backdrop blur recalculation during scroll
     val containerColor = if (darkActive) {
-        Color(0xF518181B)
+        Color(0xF0121212)
     } else {
-        Color(0xFAFFFFFF)
+        Color(0xF2FFFFFF)
     }
 
     Surface(
         modifier = modifier
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.Offscreen
+                translationX = bounceX.value
+            }
             .shadow(
-                elevation = if (darkActive) 6.dp else 3.dp,
+                elevation = if (darkActive) 6.dp else 4.dp,
                 shape = CircleShape,
-                spotColor = if (darkActive) Color.Black.copy(alpha = 0.5f) else Color(0x200F172A),
-                ambientColor = if (darkActive) Color.Black.copy(alpha = 0.3f) else Color(0x100F172A)
+                spotColor = if (darkActive) Color.Black.copy(alpha = 0.55f) else Color(0x240F172A),
+                ambientColor = if (darkActive) Color.Black.copy(alpha = 0.35f) else Color(0x140F172A)
             )
             .border(
                 border = specularRimBorder,
                 shape = CircleShape
             )
-            .graphicsLayer {
-                translationX = bounceX.value
-            }
             .pointerInput(selectedTab) {
                 detectHorizontalDragGestures(
                     onDragStart = {
@@ -286,91 +295,131 @@ fun FloatingPillNavigationBar(
         color = containerColor,
         shape = CircleShape
     ) {
-        Row(
+        val activeBgColor = if (darkActive) Color(0xFF132A1C) else Color(0xFFEAF6ED)
+        val activeBorder = if (darkActive) {
+            BorderStroke(1.dp, Color(0xFF4CAF6E).copy(alpha = 0.38f))
+        } else {
+            BorderStroke(1.dp, Color(0xFF379358).copy(alpha = 0.32f))
+        }
+        val activeColor = if (darkActive) Color(0xFF4CAF6E) else Color(0xFF379358)
+        val inactiveColor = if (darkActive) Color(0xFFA1A1AA) else Color(0xFF8E8E93)
+
+        // Liquid sliding active pill horizontal offset (each preceding inactive tab is inactiveTabWidth + 2.dp gap)
+        val targetPillOffset = (inactiveTabWidth + 2.dp) * visualActiveTab
+        val animatedPillOffset by animateDpAsState(
+            targetValue = targetPillOffset,
+            animationSpec = spring(
+                dampingRatio = 0.72f,
+                stiffness = 420f
+            ),
+            label = "liquidPillOffset"
+        )
+
+        Box(
             modifier = Modifier
                 .padding(pillPadding)
-                .height(tabSlotHeight),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                .height(tabSlotHeight)
         ) {
-            tabs.forEachIndexed { index, tab ->
-                val isSelected = visualActiveTab == index
+            // Gliding Liquid Pill Indicator
+            Box(
+                modifier = Modifier
+                    .offset(x = animatedPillOffset)
+                    .width(activeTabWidth)
+                    .height(tabSlotHeight)
+                    .clip(CircleShape)
+                    .background(activeBgColor, CircleShape)
+                    .border(activeBorder, CircleShape)
+            )
 
-                val targetWidth = if (isSelected) activeTabWidth else inactiveTabWidth
-                val animatedWidth by animateDpAsState(
-                    targetValue = targetWidth,
-                    animationSpec = spring(
-                        dampingRatio = 0.75f,
-                        stiffness = 380f
-                    ),
-                    label = "tabWidth_${tab.title}"
-                )
+            Row(
+                modifier = Modifier.height(tabSlotHeight),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                tabs.forEachIndexed { index, tab ->
+                    val isSelected = visualActiveTab == index
 
-                val activeBgColor = if (darkActive) Color(0xFF132A1C) else Color(0xFFEAF6ED)
-                val activeBorder = if (darkActive) {
-                    BorderStroke(1.dp, Color(0xFF4CAF6E).copy(alpha = 0.35f))
-                } else {
-                    BorderStroke(1.dp, Color(0xFF379358).copy(alpha = 0.30f))
-                }
+                    val targetWidth = if (isSelected) activeTabWidth else inactiveTabWidth
+                    val animatedWidth by animateDpAsState(
+                        targetValue = targetWidth,
+                        animationSpec = spring(
+                            dampingRatio = 0.74f,
+                            stiffness = 420f
+                        ),
+                        label = "tabWidth_${tab.title}"
+                    )
 
-                val activeColor = if (darkActive) Color(0xFF4CAF6E) else Color(0xFF379358)
-                val inactiveColor = if (darkActive) Color(0xFFA1A1AA) else Color(0xFF8E8E93)
-
-                val interactionSource = remember { MutableInteractionSource() }
-                val isPressed by interactionSource.collectIsPressedAsState()
-                val tabScale by animateFloatAsState(
-                    targetValue = if (isPressed) 0.95f else 1.0f,
-                    animationSpec = SpringMotion.Default,
-                    label = "tabPressScale"
-                )
-
-                Box(
-                    modifier = Modifier
-                        .width(animatedWidth)
-                        .height(tabSlotHeight)
-                        .graphicsLayer {
-                            scaleX = tabScale
-                            scaleY = tabScale
-                        }
-                        .clip(CircleShape)
-                        .then(
-                            if (isSelected) {
-                                Modifier
-                                    .background(activeBgColor, CircleShape)
-                                    .border(activeBorder, CircleShape)
-                            } else Modifier
-                        )
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null
-                        ) {
-                            if (selectedTab != index) {
-                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                onTabSelected(index)
-                            }
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+                    val tabScale by animateFloatAsState(
+                        targetValue = when {
+                            isPressed -> 0.90f
+                            isSelected -> 1.0f
+                            else -> 0.98f
                         },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 500f),
+                        label = "tabPressScale"
+                    )
+
+                    val iconPopScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.12f else 1.0f,
+                        animationSpec = spring(dampingRatio = 0.55f, stiffness = 460f),
+                        label = "iconPopScale_${tab.title}"
+                    )
+
+                    val iconLiftY by animateFloatAsState(
+                        targetValue = if (isSelected) -1.5f else 0f,
+                        animationSpec = spring(dampingRatio = 0.65f, stiffness = 420f),
+                        label = "iconLiftY_${tab.title}"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .width(animatedWidth)
+                            .height(tabSlotHeight)
+                            .graphicsLayer {
+                                scaleX = tabScale
+                                scaleY = tabScale
+                            }
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null
+                            ) {
+                                if (selectedTab != index) {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    onTabSelected(index)
+                                }
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = if (isSelected) tab.filledIcon else tab.outlinedIcon,
-                            contentDescription = tab.contentDescription,
-                            tint = if (isSelected) activeColor else inactiveColor,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = tab.title,
-                            fontSize = 10.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) activeColor else inactiveColor,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Clip
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isSelected) tab.filledIcon else tab.outlinedIcon,
+                                contentDescription = tab.contentDescription,
+                                tint = if (isSelected) activeColor else inactiveColor,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .graphicsLayer {
+                                        scaleX = iconPopScale
+                                        scaleY = iconPopScale
+                                        translationY = iconLiftY
+                                    }
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = tab.title,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) activeColor else inactiveColor,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Clip
+                            )
+                        }
                     }
                 }
             }
@@ -395,22 +444,22 @@ fun ContextualActionFab(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val darkActive = isDarkMode
 
-    // Tactile micro-interaction: scale(0.92) with spring bounce
+    // Tactile micro-interaction: scale(0.88) with spring bounce
     val fabScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1.0f,
+        targetValue = if (isPressed) 0.88f else if (isExpanded) 1.05f else 1.0f,
         animationSpec = spring(
-            dampingRatio = 0.65f,
-            stiffness = Spring.StiffnessMedium
+            dampingRatio = 0.56f,
+            stiffness = 480f
         ),
         label = "appleFabTactileScale"
     )
 
-    // Rotation angle for FAB '+' icon when speed dial is expanded
+    // Rotation angle for FAB '+' icon when speed dial is expanded or tab changes
     val rotationAngle by animateFloatAsState(
-        targetValue = if (isExpanded && activeTab != 3) 45f else 0f,
+        targetValue = if (isExpanded && activeTab != 3) 135f else (activeTab * 90f),
         animationSpec = spring(
-            dampingRatio = 0.72f,
-            stiffness = Spring.StiffnessMedium
+            dampingRatio = 0.68f,
+            stiffness = 380f
         ),
         label = "fabRotation"
     )
@@ -418,7 +467,7 @@ fun ContextualActionFab(
     // Specular border for FAB
     val fabSpecularBorder = BorderStroke(
         1.dp,
-        if (darkActive) Color.White.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.60f)
+        if (darkActive) Color.White.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.65f)
     )
 
     Box(
@@ -427,18 +476,23 @@ fun ContextualActionFab(
                 scaleX = fabScale
                 scaleY = fabScale
             }
-            .size(48.dp)
+            .size(50.dp)
             .shadow(
-                elevation = 2.dp,
+                elevation = if (isExpanded) 8.dp else 4.dp,
                 shape = CircleShape,
-                spotColor = StatusEmerald.copy(alpha = 0.25f)
+                spotColor = StatusEmerald.copy(alpha = 0.38f)
             )
             .border(
                 border = fabSpecularBorder,
                 shape = CircleShape
             )
             .background(
-                color = StatusEmerald,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF43A867),
+                        StatusEmerald
+                    )
+                ),
                 shape = CircleShape
             )
             .clip(CircleShape)

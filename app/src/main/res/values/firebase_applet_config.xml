@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="firebase_project_id" translatable="false">ledger--mate</string>
+    <string name="firestore_database_id" translatable="false">(default)</string>
+</resources>

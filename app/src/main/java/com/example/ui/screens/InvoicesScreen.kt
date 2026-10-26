@@ -99,36 +99,9 @@ fun InvoicesScreen(
         state.customers.associate { it.customer.name.lowercase() to it.customer.phone }
     }
 
-    var isHeaderVisible by remember { mutableStateOf(true) }
-
+    val isHeaderVisible = true
     val pullToRevealConnection = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val deltaY = available.y
-                if (deltaY < -10f) {
-                    if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 25) {
-                        if (isHeaderVisible) {
-                            isHeaderVisible = false
-                        }
-                    }
-                } else if (deltaY > 10f) {
-                    if (!isHeaderVisible) {
-                        isHeaderVisible = true
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    LaunchedEffect(listState) {
-        androidx.compose.runtime.snapshotFlow {
-            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= 10
-        }.distinctUntilChanged().collect { atTop ->
-            if (atTop) {
-                isHeaderVisible = true
-            }
-        }
+        object : NestedScrollConnection {}
     }
 
     Scaffold(
@@ -227,7 +200,11 @@ fun InvoicesScreen(
                                     "PAID" to "Paid"
                                 )
 
-                                items(filters) { (key, label) ->
+                                items(
+                                    items = filters,
+                                    key = { (key, _) -> "inv_filter_$key" },
+                                    contentType = { "invoice_filter_chip" }
+                                ) { (key, label) ->
                                     val isSelected = state.invoiceFilter == key
                                     FilterChip(
                                         selected = isSelected,
@@ -319,10 +296,12 @@ fun InvoicesScreen(
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    item { Spacer(modifier = Modifier.height(4.dp)) }
+                    item(key = "invoices_top_spacer", contentType = "top_spacer") {
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
 
                     if (state.summary.overdueInvoiceCount > 0) {
-                        item {
+                        item(key = "invoices_overdue_banner", contentType = "overdue_banner") {
                             Card(
                                 shape = RoundedCornerShape(18.dp),
                                 colors = CardDefaults.cardColors(containerColor = AmberWarningLight),
@@ -373,7 +352,7 @@ fun InvoicesScreen(
                     items(
                         items = filteredInvoices,
                         key = { it.id },
-                        contentType = { "invoice_card_item" }
+                        contentType = { inv -> "invoice_card_${inv.status}" }
                     ) { inv ->
                         val isSelected = selectedIds.contains(inv.id)
                         InvoiceCardItem(
@@ -396,7 +375,9 @@ fun InvoicesScreen(
                         )
                     }
 
-                    item { Spacer(modifier = Modifier.height(145.dp)) }
+                    item(key = "invoices_bottom_spacer", contentType = "bottom_spacer") {
+                        Spacer(modifier = Modifier.height(145.dp))
+                    }
                 }
 
                 ScrollEdgeShadow(

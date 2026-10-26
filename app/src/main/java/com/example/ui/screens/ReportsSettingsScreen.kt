@@ -47,6 +47,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,7 @@ import com.example.sync.SyncStatus
 import com.example.ui.Formatters
 import com.example.ui.LedgerUiState
 import com.example.ui.components.ScrollEdgeShadow
+import com.example.ui.components.pressScale
 import com.example.ui.components.rememberCanScrollBack
 import com.example.ui.theme.*
 import com.example.utils.ExportUtils
@@ -85,6 +88,9 @@ fun ReportsSettingsScreen(
     onDeleteAuditLog: (String) -> Unit = {},
     onClearAuditLogs: () -> Unit = {},
     onSignOut: () -> Unit = {},
+    onSignInWithGoogle: (android.content.Context) -> Unit = {},
+    onSignInWithEmail: (String, String) -> Unit = { _, _ -> },
+    onSignUpWithEmail: (String, String, String) -> Unit = { _, _, _ -> },
     onTriggerCloudSync: () -> Unit = {},
     onToggleDarkMode: (Boolean) -> Unit = {},
     onSetLanguage: (AppLanguage) -> Unit = {},
@@ -130,6 +136,7 @@ fun ReportsSettingsScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showManageUnitsDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
+    var showEmailAuthDialog by remember { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
 
@@ -312,39 +319,110 @@ fun ReportsSettingsScreen(
                                 }
                             }
                         } else {
-                            // Signed out / Offline mode
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            // Signed out / Offline mode with 1-tap Google Sign-In
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = accentGreenLight,
-                                    modifier = Modifier.size(46.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Default.CloudSync,
-                                            contentDescription = null,
-                                            tint = accentGreen,
-                                            modifier = Modifier.size(24.dp)
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = accentGreenLight,
+                                        modifier = Modifier.size(46.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.CloudSync,
+                                                contentDescription = null,
+                                                tint = accentGreen,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Cloud Sync & Backup",
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 16.sp
+                                            ),
+                                            color = textPrimary
+                                        )
+                                        Text(
+                                            text = "Sign in with Google to sync with Firebase (ledger--mate)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = textSecondary
                                         )
                                     }
                                 }
-                                Column {
-                                    Text(
-                                        text = "Cloud Sync & Backup",
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 16.sp
-                                        ),
-                                        color = textPrimary
+
+                                Button(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSignInWithGoogle(context)
+                                    },
+                                    enabled = !state.isSigningIn,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = accentGreen,
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(vertical = 12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pressScale(targetScale = 0.96f)
+                                        .testTag("settings_google_sign_in_button")
+                                ) {
+                                    if (state.isSigningIn) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(18.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color.White
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Signing in...", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    } else {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                com.example.ui.components.GoogleLogoIcon(modifier = Modifier.size(14.dp))
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text("Sign in with Google", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        showEmailAuthDialog = true
+                                    },
+                                    enabled = !state.isSigningIn,
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, if (isDark) Color(0xFF3F3F46) else Color(0xFFD1D5DB)),
+                                    contentPadding = PaddingValues(vertical = 11.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .pressScale(targetScale = 0.96f)
+                                        .testTag("settings_email_sign_in_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Email,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = textPrimary
                                     )
-                                    Text(
-                                        text = "Offline Mode / Local Storage",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = textSecondary
-                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Sign in with Email", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = textPrimary)
                                 }
                             }
                         }
@@ -734,43 +812,6 @@ fun ReportsSettingsScreen(
                                         }
                                     }
                                 }
-
-                                // Crashlytics System Health & Test Crash — strictly behind DEBUG flag (#32)
-                                if (com.example.BuildConfig.DEBUG) {
-                                    HorizontalDivider(color = dividerColor, thickness = 1.dp)
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text(
-                                                text = "Firebase Crashlytics (Debug)",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = textPrimary
-                                            )
-                                            Text(
-                                                text = "Non-fatal diagnostics active (No PII)",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = textSecondary
-                                            )
-                                        }
-
-                                        OutlinedButton(
-                                            onClick = {
-                                                com.example.crashlytics.AppCrashlytics.triggerTestCrash()
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            border = BorderStroke(1.dp, DebitRed.copy(alpha = 0.5f)),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = DebitRed),
-                                            modifier = Modifier.height(32.dp)
-                                        ) {
-                                            Text("Test Crash", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -793,6 +834,145 @@ fun ReportsSettingsScreen(
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
+    }
+
+    // ============================================================
+    // DIALOG 0: EMAIL AUTH (SIGN IN / CREATE ACCOUNT)
+    // ============================================================
+    if (showEmailAuthDialog) {
+        var emailAuthMode by remember { mutableStateOf("SIGN_IN") }
+        var emailText by remember { mutableStateOf("") }
+        var passText by remember { mutableStateOf("") }
+        var nameText by remember { mutableStateOf("") }
+        var passVisible by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showEmailAuthDialog = false },
+            containerColor = cardBackground,
+            title = {
+                Text(
+                    text = if (emailAuthMode == "SIGN_IN") "Sign In with Email" else "Create Account",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = textPrimary
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(surfaceVariantBg)
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val isSignIn = emailAuthMode == "SIGN_IN"
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSignIn) (if (isDark) Color(0xFF2C2C2E) else Color.White) else Color.Transparent)
+                                .clickable { emailAuthMode = "SIGN_IN" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Sign In",
+                                fontSize = 12.5.sp,
+                                fontWeight = if (isSignIn) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSignIn) accentGreen else textSecondary
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (!isSignIn) (if (isDark) Color(0xFF2C2C2E) else Color.White) else Color.Transparent)
+                                .clickable { emailAuthMode = "SIGN_UP" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Create Account",
+                                fontSize = 12.5.sp,
+                                fontWeight = if (!isSignIn) FontWeight.Bold else FontWeight.Medium,
+                                color = if (!isSignIn) accentGreen else textSecondary
+                            )
+                        }
+                    }
+
+                    if (emailAuthMode == "SIGN_UP") {
+                        OutlinedTextField(
+                            value = nameText,
+                            onValueChange = { nameText = it },
+                            label = { Text("Your Name (optional)") },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = textSecondary) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = emailText,
+                        onValueChange = { emailText = it },
+                        label = { Text("Email Address") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = textSecondary) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = passText,
+                        onValueChange = { passText = it },
+                        label = { Text("Password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = textSecondary) },
+                        trailingIcon = {
+                            IconButton(onClick = { passVisible = !passVisible }) {
+                                Icon(
+                                    imageVector = if (passVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (passVisible) "Hide password" else "Show password",
+                                    tint = textSecondary
+                                )
+                            }
+                        },
+                        visualTransformation = if (passVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (emailAuthMode == "SIGN_IN") {
+                            onSignInWithEmail(emailText.trim(), passText)
+                        } else {
+                            onSignUpWithEmail(emailText.trim(), passText, nameText.trim())
+                        }
+                        showEmailAuthDialog = false
+                    },
+                    enabled = emailText.isNotBlank() && passText.isNotBlank() && !state.isSigningIn,
+                    colors = ButtonDefaults.buttonColors(containerColor = accentGreen)
+                ) {
+                    Text(if (emailAuthMode == "SIGN_IN") "Sign In" else "Create Account")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEmailAuthDialog = false }) {
+                    Text("Cancel", color = textSecondary)
+                }
+            }
+        )
     }
 
     // ============================================================

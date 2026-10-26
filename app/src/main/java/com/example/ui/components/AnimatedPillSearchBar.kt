@@ -60,7 +60,6 @@ fun AnimatedPillSearchBar(
     enableVoiceSearch: Boolean = true,
     trailingIcon: (@Composable () -> Unit)? = null
 ) {
-    var currentIndex by remember { mutableIntStateOf(0) }
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val focusManager = LocalFocusManager.current
@@ -90,14 +89,6 @@ fun AnimatedPillSearchBar(
                 text = query,
                 selection = TextRange(query.length)
             )
-        }
-    }
-
-    // Placeholder Cycling Animation (3.5s interval)
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(3500L)
-            currentIndex = (currentIndex + 1) % placeholderSequence.size
         }
     }
 
@@ -160,31 +151,13 @@ fun AnimatedPillSearchBar(
                         .fillMaxHeight(),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    // Animated Floating Placeholder
+                    // Isolated Placeholder Leaf Composable so timer ticks never recompose the search bar
                     if (textFieldValue.text.isEmpty()) {
-                        AnimatedContent(
-                            targetState = placeholderSequence[currentIndex],
-                            transitionSpec = {
-                                (slideInVertically(animationSpec = tween(350)) { height -> height / 2 } +
-                                        fadeIn(animationSpec = tween(350)))
-                                    .togetherWith(
-                                        slideOutVertically(animationSpec = tween(350)) { height -> -height / 2 } +
-                                                fadeOut(animationSpec = tween(350))
-                                    )
-                            },
-                            label = "search_placeholder_transition"
-                        ) { animatedText ->
-                            Text(
-                                text = animatedText,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Normal
-                                ),
-                                color = if (isDark) Color.White.copy(alpha = 0.5f) else Color(0xFF8E8E93),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        CyclingSearchPlaceholder(
+                            placeholderSequence = placeholderSequence,
+                            isFocused = isFocused,
+                            isDark = isDark
+                        )
                     }
 
                     // Core Basic Text Field
@@ -291,3 +264,35 @@ fun AnimatedPillSearchBar(
         }
     }
 }
+
+@Composable
+private fun CyclingSearchPlaceholder(
+    placeholderSequence: List<String>,
+    isFocused: Boolean,
+    isDark: Boolean
+) {
+    var currentIndex by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(placeholderSequence.size, isFocused) {
+        if (!isFocused && placeholderSequence.size > 1) {
+            while (true) {
+                delay(3500L)
+                currentIndex = (currentIndex + 1) % placeholderSequence.size
+            }
+        }
+    }
+
+    val safeText = placeholderSequence.getOrElse(currentIndex) { placeholderSequence.firstOrNull() ?: "Search..." }
+
+    Text(
+        text = safeText,
+        style = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Normal
+        ),
+        color = if (isDark) Color.White.copy(alpha = 0.5f) else Color(0xFF8E8E93),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+

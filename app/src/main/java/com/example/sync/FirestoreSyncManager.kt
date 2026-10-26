@@ -89,7 +89,8 @@ class FirestoreSyncManager(
     private fun getFirestore(): FirebaseFirestore? {
         if (firestoreInstance == null) {
             try {
-                val db = FirebaseFirestore.getInstance()
+                val dbId = context.getString(com.example.R.string.firestore_database_id)
+                val db = FirebaseFirestore.getInstance(dbId)
                 try {
                     val settings = com.google.firebase.firestore.FirebaseFirestoreSettings.Builder()
                         .setLocalCacheSettings(

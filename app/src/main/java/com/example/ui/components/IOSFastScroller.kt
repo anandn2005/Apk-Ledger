@@ -52,32 +52,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.flow.distinctUntilChanged
+
 /**
  * iOS-Style Interactive Scrollbar Pill Component.
- *
- * Implements:
- * 1) Visibility:
- *    - Fully hidden/transparent by default when list is at rest.
- *    - Fades in (~150ms) on any scroll delta (small or large).
- *    - Remains visible for 2 seconds after scroll inactivity, then fades out (~220ms ease-out).
- *    - Reset 2-second timer continuously while scrolling.
- * 2) Position & Size:
- *    - Right edge of screen, ~5px margin from screen boundary.
- *    - Height proportional to visible viewport relative to total scrollable items (min ~38dp).
- *    - Position tracks scroll progress in real time.
- *    - Capsule shape (RoundedCornerShape(999.dp)), resting width 6dp.
- * 3) Press / Drag Interaction:
- *    - On press/drag: zooms in to ~14dp width with quick spring transition (~100-150ms).
- *    - Dragging scrolls list in real time (1:1 proportional mapping to scroll position).
- *    - On release: zooms back out with subtle spring settle and starts 2-second fade-out timer.
- *    - Light haptic tick on initial grab and when traversing items during drag.
- * 4) Up/Down Chevron Vectors:
- *    - Small up-chevron (⌃) near top edge, down-chevron (⌄) near bottom edge.
- *    - Contrasting tint (white on accent green).
- *    - Scales proportionally in resting and zoomed states.
- * 5) Visual Style:
- *    - Accent green (#379358 at ~0.88 opacity) with soft drop shadow.
- *    - Light translucent fill in dark mode.
+ * Optimized for 120 FPS:
+ * - Zero recompositions during scroll (reads scroll fraction strictly inside the layout-phase .offset {} lambda).
+ * - Uses Box + onSizeChanged instead of SubcomposeLayout (BoxWithConstraints).
+ * - Uses distinctUntilChanged on isScrollInProgress so coroutines are not cancelled/relaunched on every pixel.
  */
 @Composable
 fun IosScrollbarPill(
@@ -85,10 +69,10 @@ fun IosScrollbarPill(
     modifier: Modifier = Modifier,
     isDarkMode: Boolean = isSystemInDarkTheme()
 ) {
-    val totalItems by remember {
+    val totalItems by remember(listState) {
         derivedStateOf { listState.layoutInfo.totalItemsCount }
     }
-    val visibleItems by remember {
+    val visibleItems by remember(listState) {
         derivedStateOf { listState.layoutInfo.visibleItemsInfo.size }
     }
 
@@ -101,27 +85,33 @@ fun IosScrollbarPill(
 
     var isVisible by remember { mutableStateOf(false) }
     var isDragging by remember { mutableStateOf(false) }
-    var lastScrollTime by remember { mutableLongStateOf(0L) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
     var lastHapticIndex by remember { mutableIntStateOf(-1) }
+    var trackHeightPx by remember { mutableFloatStateOf(0f) }
 
-    // Efficiently observe scroll state changes via snapshotFlow without recomposition churn
+    // Observe only scroll start/stop transitions — ZERO per-pixel coroutine restarts during fling
     LaunchedEffect(listState) {
         androidx.compose.runtime.snapshotFlow {
-            Triple(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
-        }.collect { (idx, off, inProgress) ->
-            if (inProgress || idx > 0 || off > 0) {
+            listState.isScrollInProgress
+        }.distinctUntilChanged().collect { inProgress ->
+            if (inProgress) {
                 isVisible = true
-                lastScrollTime = System.currentTimeMillis()
+            } else if (!isDragging && isVisible) {
+                delay(1800L)
+                if (!listState.isScrollInProgress && !isDragging) {
+                    isVisible = false
+                }
             }
         }
     }
 
-    // 2-second inactivity timer to fade out
-    LaunchedEffect(lastScrollTime, isDragging) {
-        if (!isDragging && isVisible) {
-            delay(2000L)
-            isVisible = false
+    // Fade out after drag release
+    LaunchedEffect(isDragging) {
+        if (!isDragging && isVisible && !listState.isScrollInProgress) {
+            delay(1800L)
+            if (!listState.isScrollInProgress && !isDragging) {
+                isVisible = false
+            }
         }
     }
 
@@ -135,26 +125,18 @@ fun IosScrollbarPill(
         label = "ios_pill_alpha"
     )
 
-    // Pill width zoom: 14dp resting -> 20dp pressed/dragging
-    val pillWidthDp by animateDpAsState(
-        targetValue = if (isDragging) 20.dp else 14.dp,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = 450f
-        ),
-        label = "ios_pill_width"
-    )
-
-    // Calculate real-time scroll fraction
-    val currentScrollFraction by remember {
-        derivedStateOf {
-            val total = listState.layoutInfo.totalItemsCount
-            val visible = listState.layoutInfo.visibleItemsInfo.size
-            if (total <= visible || total <= 1) 0f
-            else {
+    // Helper function evaluated inside layout phase (.offset {}) to avoid composition-phase state reads
+    val computeScrollFraction: () -> Float = remember(listState) {
+        {
+            val layoutInfo = listState.layoutInfo
+            val total = layoutInfo.totalItemsCount
+            val visible = layoutInfo.visibleItemsInfo.size
+            if (total <= visible || total <= 1) {
+                0f
+            } else {
                 val firstIdx = listState.firstVisibleItemIndex
                 val firstOff = listState.firstVisibleItemScrollOffset
-                val itemSize = listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
+                val itemSize = layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 1
                 val exactIndex = firstIdx + (firstOff.toFloat() / itemSize.coerceAtLeast(1))
                 val maxScrollable = (total - visible).coerceAtLeast(1)
                 (exactIndex / maxScrollable).coerceIn(0f, 1f)
@@ -162,48 +144,42 @@ fun IosScrollbarPill(
         }
     }
 
-    // Keep drag progress in sync when not dragging
-    LaunchedEffect(currentScrollFraction) {
-        if (!isDragging) {
-            dragProgress = currentScrollFraction
-        }
-    }
-
-    // Colors matching screenshot: crisp white capsule button with solid dark triangles
     val pillBackgroundColor = if (isDarkMode) Color(0xFF333336) else Color.White
     val triangleColor = if (isDarkMode) Color.White else Color(0xFF1A1A1A)
+    val pillHeightDp = 48.dp
+    val pillHeightPx = remember(density) { with(density) { pillHeightDp.toPx() } }
 
     if (pillAlpha > 0.01f || isDragging) {
-        BoxWithConstraints(
+        Box(
             modifier = modifier
                 .fillMaxHeight()
-                .width(52.dp),
+                .width(52.dp)
+                .onSizeChanged { trackHeightPx = it.height.toFloat() },
             contentAlignment = Alignment.TopEnd
         ) {
-            val trackHeightPx = with(density) { maxHeight.toPx() }
-            val pillHeightDp = 48.dp
-            val pillHeightPx = with(density) { pillHeightDp.toPx() }
             val usableTrackHeightPx = (trackHeightPx - pillHeightPx).coerceAtLeast(1f)
-
-            val currentProgress = if (isDragging) dragProgress else currentScrollFraction
-            val pillOffsetYPx = (currentProgress * usableTrackHeightPx).coerceIn(0f, usableTrackHeightPx)
 
             // Touch hit-box container (52dp wide hit area with right padding for pill button)
             Box(
                 modifier = Modifier
                     .width(52.dp)
                     .height(pillHeightDp)
-                    .offset { IntOffset(x = 0, y = pillOffsetYPx.roundToInt()) }
+                    .offset {
+                        val progress = if (isDragging) dragProgress else computeScrollFraction()
+                        val yPx = (progress * usableTrackHeightPx).coerceIn(0f, usableTrackHeightPx)
+                        IntOffset(x = 0, y = yPx.roundToInt())
+                    }
                     .graphicsLayer {
+                        compositingStrategy = CompositingStrategy.Offscreen
                         alpha = pillAlpha
                     }
                     .pointerInput(totalItems, usableTrackHeightPx) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             down.consume()
+                            dragProgress = computeScrollFraction()
                             isDragging = true
                             isVisible = true
-                            lastScrollTime = System.currentTimeMillis()
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
                             while (true) {
@@ -211,13 +187,11 @@ fun IosScrollbarPill(
                                 val change = event.changes.firstOrNull() ?: break
                                 if (!change.pressed) {
                                     isDragging = false
-                                    lastScrollTime = System.currentTimeMillis()
                                     break
                                 }
                                 val deltaY = change.position.y - change.previousPosition.y
                                 if (deltaY != 0f) {
                                     change.consume()
-                                    lastScrollTime = System.currentTimeMillis()
                                     val newProgress = (dragProgress + (deltaY / usableTrackHeightPx)).coerceIn(0f, 1f)
                                     dragProgress = newProgress
 
@@ -233,12 +207,13 @@ fun IosScrollbarPill(
                                 }
                             }
                             isDragging = false
-                            lastScrollTime = System.currentTimeMillis()
                         }
                     },
                 contentAlignment = Alignment.CenterEnd
             ) {
-                // Stadium capsule button with solid ▲ ▼ filled triangles as requested in screenshot
+                val topTriPath = remember { Path() }
+                val botTriPath = remember { Path() }
+
                 Canvas(
                     modifier = Modifier
                         .padding(end = 6.dp)
@@ -263,7 +238,7 @@ fun IosScrollbarPill(
                         cornerRadius = CornerRadius(cornerRadiusPx, cornerRadiusPx)
                     )
 
-                    // 2. Solid Filled Triangles ▲ ▼
+                    // 2. Solid Filled Triangles ▲ ▼ (reusing cached Path instances)
                     val centerX = w / 2f
                     val centerY = h / 2f
 
@@ -271,29 +246,19 @@ fun IosScrollbarPill(
                     val triHeight = triBase * 0.72f
                     val gap = 2.5.dp.toPx()
 
-                    // Top Triangle ▲ (pointing up)
-                    val topTriPath = Path().apply {
-                        moveTo(centerX, centerY - gap - triHeight) // Top vertex
-                        lineTo(centerX - triBase / 2f, centerY - gap) // Bottom left
-                        lineTo(centerX + triBase / 2f, centerY - gap) // Bottom right
-                        close()
-                    }
-                    drawPath(
-                        path = topTriPath,
-                        color = triangleColor
-                    )
+                    topTriPath.reset()
+                    topTriPath.moveTo(centerX, centerY - gap - triHeight)
+                    topTriPath.lineTo(centerX - triBase / 2f, centerY - gap)
+                    topTriPath.lineTo(centerX + triBase / 2f, centerY - gap)
+                    topTriPath.close()
+                    drawPath(path = topTriPath, color = triangleColor)
 
-                    // Bottom Triangle ▼ (pointing down)
-                    val botTriPath = Path().apply {
-                        moveTo(centerX - triBase / 2f, centerY + gap) // Top left
-                        lineTo(centerX + triBase / 2f, centerY + gap) // Top right
-                        lineTo(centerX, centerY + gap + triHeight) // Bottom vertex
-                        close()
-                    }
-                    drawPath(
-                        path = botTriPath,
-                        color = triangleColor
-                    )
+                    botTriPath.reset()
+                    botTriPath.moveTo(centerX - triBase / 2f, centerY + gap)
+                    botTriPath.lineTo(centerX + triBase / 2f, centerY + gap)
+                    botTriPath.lineTo(centerX, centerY + gap + triHeight)
+                    botTriPath.close()
+                    drawPath(path = botTriPath, color = triangleColor)
                 }
             }
         }

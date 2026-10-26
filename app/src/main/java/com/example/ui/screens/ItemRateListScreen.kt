@@ -208,71 +208,17 @@ fun ItemRateListScreen(
     val categoryRowState = rememberLazyListState()
     var isCategoryPillsVisible by rememberSaveable { mutableStateOf(false) }
 
-    var isHeaderVisible by remember { mutableStateOf(true) }
-
-    var overscrollOffset by remember { mutableFloatStateOf(0f) }
-    val animatedOverscroll by animateFloatAsState(
-        targetValue = overscrollOffset,
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow),
-        label = "overscrollSpring"
-    )
+    val isHeaderVisible = true
 
     val pullToRevealConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                // Auto-hiding header scroll-direction detection (iOS Safari style)
-                val deltaY = available.y
-                if (deltaY < -10f) {
-                    // Scrolling down (content moving up) -> hide header if not at top of list
-                    if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 25) {
-                        if (isHeaderVisible) {
-                            isHeaderVisible = false
-                        }
-                    }
-                } else if (deltaY > 10f) {
-                    // Scrolling up (content moving down) -> promptly reveal header
-                    if (!isHeaderVisible) {
-                        isHeaderVisible = true
-                    }
-                }
-
-                if (overscrollOffset > 0 && available.y < 0) {
-                    val consumed = available.y.coerceAtLeast(-overscrollOffset)
-                    overscrollOffset += consumed
-                    return Offset(0f, consumed)
-                }
                 if (available.y > 15f && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
                     if (!isCategoryPillsVisible) {
                         isCategoryPillsVisible = true
                     }
                 }
                 return Offset.Zero
-            }
-
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (available.y > 0 && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
-                    overscrollOffset = (overscrollOffset + available.y * 0.30f).coerceAtMost(100f)
-                    return Offset(0f, available.y)
-                }
-                return Offset.Zero
-            }
-
-            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
-                if (overscrollOffset != 0f) {
-                    overscrollOffset = 0f
-                }
-                return androidx.compose.ui.unit.Velocity.Zero
-            }
-        }
-    }
-
-    // Edge case: if user is at the very top of the list, header is always pinned and visible
-    LaunchedEffect(listState) {
-        androidx.compose.runtime.snapshotFlow {
-            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset <= 10
-        }.distinctUntilChanged().collect { atTop ->
-            if (atTop) {
-                isHeaderVisible = true
             }
         }
     }
@@ -457,17 +403,21 @@ fun ItemRateListScreen(
                             )
                         }
 
-                        // Quick-Bill Counter Mode Toggle Button (+ / - Quantity Stepper) with label (#6)
+                        // Cart Mode Toggle Button (+ / - Quantity Stepper)
+                        val isCartModeActive = isCounterMode || cartItemsMap.isNotEmpty()
                         Surface(
-                            onClick = { isCounterMode = !isCounterMode },
+                            onClick = {
+                                isCounterMode = !isCounterMode
+                                isCompactView = false
+                            },
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isCounterMode || cartItemsMap.isNotEmpty())
+                            color = if (isCartModeActive)
                                 MaterialTheme.colorScheme.primaryContainer
                             else
                                 if (isAppInDarkTheme()) DarkSurfaceVariant else Color(0xFFF1F5F9),
                             border = BorderStroke(
                                 1.dp,
-                                if (isCounterMode || cartItemsMap.isNotEmpty())
+                                if (isCartModeActive)
                                     Color(0xFF10B981)
                                 else
                                     if (isAppInDarkTheme()) DarkBorder else Color(0xFFCBD5E1)
@@ -475,7 +425,7 @@ fun ItemRateListScreen(
                             shadowElevation = 1.dp,
                             modifier = Modifier
                                 .height(44.dp)
-                                .testTag("rate_counter_mode_toggle")
+                                .testTag("rate_cart_mode_toggle")
                         ) {
                             Column(
                                 modifier = Modifier.padding(horizontal = 8.dp),
@@ -483,62 +433,19 @@ fun ItemRateListScreen(
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.AddShoppingCart,
-                                    contentDescription = "Quick Counter Billing Mode",
-                                    tint = if (isCounterMode || cartItemsMap.isNotEmpty())
+                                    imageVector = Icons.Outlined.ShoppingCart,
+                                    contentDescription = "Cart",
+                                    tint = if (isCartModeActive)
                                         Color(0xFF10B981)
                                     else
                                         Color(0xFF64748B),
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "Bill",
+                                    text = "Cart",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (isCounterMode || cartItemsMap.isNotEmpty()) Color(0xFF10B981) else Color(0xFF64748B)
-                                )
-                            }
-                        }
-
-                        // Compact Spreadsheet View Toggle Button with label (#6)
-                        Surface(
-                            onClick = { isCompactView = !isCompactView },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isCompactView)
-                                MaterialTheme.colorScheme.primaryContainer
-                            else
-                                if (isAppInDarkTheme()) DarkSurfaceVariant else Color(0xFFF1F5F9),
-                            border = BorderStroke(
-                                1.dp,
-                                if (isCompactView)
-                                    Color(0xFF10B981)
-                                else
-                                    if (isAppInDarkTheme()) DarkBorder else Color(0xFFCBD5E1)
-                            ),
-                            shadowElevation = 1.dp,
-                            modifier = Modifier
-                                .height(44.dp)
-                                .testTag("rate_compact_view_toggle")
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = if (isCompactView) Icons.Outlined.ViewAgenda else Icons.Outlined.TableChart,
-                                    contentDescription = "Toggle Compact Spreadsheet View",
-                                    tint = if (isCompactView)
-                                        Color(0xFF10B981)
-                                    else
-                                        Color(0xFF64748B),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = if (isCompactView) "Cards" else "Table",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isCompactView) Color(0xFF10B981) else Color(0xFF64748B)
+                                    color = if (isCartModeActive) Color(0xFF10B981) else Color(0xFF64748B)
                                 )
                             }
                         }
@@ -616,7 +523,8 @@ fun ItemRateListScreen(
                                     ) {
                                         itemsIndexed(
                                             items = state.rateCategories,
-                                            key = { _, cat -> "cat_segment_$cat" }
+                                            key = { _, cat -> "cat_segment_$cat" },
+                                            contentType = { _, _ -> "category_pill" }
                                         ) { index, cat ->
                                             val isSelected = cat.equals(state.selectedRateCategory, ignoreCase = true)
                                             val pillScale by animateFloatAsState(
@@ -693,7 +601,10 @@ fun ItemRateListScreen(
                                         }
 
                                         // Inline + Add Category Action Chip
-                                        item(key = "add_category_chip_btn") {
+                                        item(
+                                            key = "add_category_chip_btn",
+                                            contentType = "add_category_btn"
+                                        ) {
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(16.dp))
@@ -866,6 +777,25 @@ fun ItemRateListScreen(
                 }
             } else {
                 Box(modifier = Modifier.fillMaxSize()) {
+                    val cartSnapshot = remember(cartItemsMap) {
+                        if (cartItemsMap.isEmpty()) VariantCartSnapshot.Empty else VariantCartSnapshot(cartItemsMap)
+                    }
+                    val onAdjustCartQtyStable = remember {
+                        { key: String, desc: String, unitPrice: Double, delta: Double ->
+                            val existing = cartItemsMap[key]
+                            val nextQty = ((existing?.quantity ?: 0.0) + delta).coerceAtLeast(0.0)
+                            cartItemsMap = if (nextQty <= 0.0) {
+                                cartItemsMap - key
+                            } else {
+                                cartItemsMap + (key to com.example.data.InvoiceItem(
+                                    description = desc,
+                                    quantity = nextQty,
+                                    unitPrice = unitPrice
+                                ))
+                            }
+                        }
+                    }
+
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(top = 0.dp, bottom = 145.dp),
@@ -876,67 +806,47 @@ fun ItemRateListScreen(
                     ) {
                         itemsIndexed(
                             items = state.rateItems,
-                            key = { _, it -> it.id },
-                            contentType = { _, it ->
-                                when {
-                                    isCompactView -> "compact_rate_item"
-                                    it.hasVariants() -> "multi_variant_rate_item"
-                                    else -> "single_rate_item"
-                                }
-                            }
+                            key = { _, item -> item.id }, // NEVER use list index
+                            contentType = { _, item -> if (item.variants.isNotEmpty()) "variant" else "single" }
                         ) { index, item ->
                             val isSelected = selectedItemIds.contains(item.id)
-                            val itemCartQty = cartItemsMap[item.id]?.quantity ?: 0.0
-                            Box(modifier = Modifier.animateItem()) {
-                                RateItemCard(
-                                    item = item,
-                                    rowIndex = index,
-                                    currencySymbol = state.currencySymbol,
-                                    isSelected = isSelected,
-                                    isSelectionMode = isSelectionMode,
-                                    isCompactView = isCompactView,
-                                    isCounterMode = isCounterMode || cartItemsMap.isNotEmpty(),
-                                    cartQuantity = itemCartQty,
-                                    variantCartQuantities = cartItemsMap,
-                                    onAdjustCartQty = { key, desc, unitPrice, delta ->
-                                        val existing = cartItemsMap[key]
-                                        val nextQty = ((existing?.quantity ?: 0.0) + delta).coerceAtLeast(0.0)
-                                        cartItemsMap = if (nextQty <= 0.0) {
-                                            cartItemsMap - key
-                                        } else {
-                                            cartItemsMap + (key to com.example.data.InvoiceItem(
-                                                description = desc,
-                                                quantity = nextQty,
-                                                unitPrice = unitPrice
-                                            ))
-                                        }
-                                    },
-                                    onToggleSelect = {
-                                        selectedItemIds = if (isSelected) {
-                                            selectedItemIds - item.id
-                                        } else {
-                                            selectedItemIds + item.id
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (!isSelectionMode) {
-                                            selectedItemIds = setOf(item.id)
-                                        }
-                                    },
-                                    onEdit = {
-                                        itemToEdit = item
-                                        showAddEditSheet = true
-                                    },
-                                    onDelete = {
-                                        viewModel.deleteRateItem(item)
-                                    },
-                                    onViewHistory = { targetVariantId ->
-                                        historyItem = item
-                                        selectedVariantIdForHistory = targetVariantId
-                                    },
-                                    onUpdateRateClick = { itemForRateUpdate = item }
-                                )
-                            }
+                            val itemCartQty = cartSnapshot.quantities[item.id]?.quantity ?: 0.0
+                            RateItemCard(
+                                item = item,
+                                rowIndex = index,
+                                currencySymbol = state.currencySymbol,
+                                isSelected = isSelected,
+                                isSelectionMode = isSelectionMode,
+                                isCompactView = isCompactView,
+                                isCounterMode = isCounterMode || cartSnapshot.quantities.isNotEmpty(),
+                                cartQuantity = itemCartQty,
+                                variantCartSnapshot = if (item.variants.isNotEmpty()) cartSnapshot else VariantCartSnapshot.Empty,
+                                onAdjustCartQty = onAdjustCartQtyStable,
+                                onToggleSelect = {
+                                    selectedItemIds = if (isSelected) {
+                                        selectedItemIds - item.id
+                                    } else {
+                                        selectedItemIds + item.id
+                                    }
+                                },
+                                onLongClick = {
+                                    if (!isSelectionMode) {
+                                        selectedItemIds = setOf(item.id)
+                                    }
+                                },
+                                onEdit = {
+                                    itemToEdit = item
+                                    showAddEditSheet = true
+                                },
+                                onDelete = {
+                                    viewModel.deleteRateItem(item)
+                                },
+                                onViewHistory = { targetVariantId ->
+                                    historyItem = item
+                                    selectedVariantIdForHistory = targetVariantId
+                                },
+                                onUpdateRateClick = { itemForRateUpdate = item }
+                            )
                         }
                     }
 
@@ -1456,6 +1366,15 @@ private fun QuickCartStepperPill(
     }
 }
 
+@androidx.compose.runtime.Immutable
+data class VariantCartSnapshot(
+    val quantities: Map<String, com.example.data.InvoiceItem> = emptyMap()
+) {
+    companion object {
+        val Empty = VariantCartSnapshot()
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RateItemCard(
@@ -1467,7 +1386,7 @@ fun RateItemCard(
     isCompactView: Boolean = false,
     isCounterMode: Boolean = false,
     cartQuantity: Double = 0.0,
-    variantCartQuantities: Map<String, com.example.data.InvoiceItem> = emptyMap(),
+    variantCartSnapshot: VariantCartSnapshot = VariantCartSnapshot.Empty,
     onAdjustCartQty: (key: String, desc: String, unitPrice: Double, delta: Double) -> Unit = { _, _, _, _ -> },
     onToggleSelect: () -> Unit = {},
     onLongClick: () -> Unit = {},
@@ -1479,7 +1398,7 @@ fun RateItemCard(
     val haptic = LocalHapticFeedback.current
     val isDark = isAppInDarkTheme()
     var isExpanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
     val animatedOffsetX by animateFloatAsState(
         targetValue = offsetX,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
@@ -1487,18 +1406,10 @@ fun RateItemCard(
     )
 
     val density = LocalDensity.current
-    val minSwipePx = with(density) { 60.dp.toPx() }
-    val maxSwipePx = with(density) { 100.dp.toPx() }
-    val openRightSwipePx = with(density) { 80.dp.toPx() }
-    val openLeftSwipePx = with(density) { -80.dp.toPx() }
-
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val rowAlpha by animateFloatAsState(
-        targetValue = if (isPressed && !isSelectionMode) 0.72f else 1.0f,
-        animationSpec = tween(80),
-        label = "rowAlpha"
-    )
+    val minSwipePx = remember(density) { with(density) { 60.dp.toPx() } }
+    val maxSwipePx = remember(density) { with(density) { 100.dp.toPx() } }
+    val openRightSwipePx = remember(density) { with(density) { 80.dp.toPx() } }
+    val openLeftSwipePx = remember(density) { with(density) { -80.dp.toPx() } }
 
     val stripeBg = if (isCompactView && rowIndex % 2 == 1) {
         if (isDark) Color(0xFF202024) else Color(0xFFF8FAFC)
@@ -1506,13 +1417,15 @@ fun RateItemCard(
         if (isDark) DarkSurface else SurfaceLight
     }
 
+    val hasVariants = item.variants.isNotEmpty()
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (isDark) Color(0xFF1C1C1E) else Color.White)
     ) {
-        // Swipe actions background
-        if (!isSelectionMode) {
+        // Swipe actions background (only composed when user actively swipes the row)
+        if (!isSelectionMode && (offsetX != 0f || animatedOffsetX != 0f)) {
             Row(
                 modifier = Modifier
                     .matchParentSize()
@@ -1520,7 +1433,7 @@ fun RateItemCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (offsetX > 0) {
+                if (offsetX > 0 || animatedOffsetX > 0) {
                     Box(
                         modifier = Modifier
                             .size(38.dp)
@@ -1544,7 +1457,7 @@ fun RateItemCard(
                     Spacer(modifier = Modifier.width(38.dp))
                 }
 
-                if (offsetX < 0) {
+                if (offsetX < 0 || animatedOffsetX < 0) {
                     Box(
                         modifier = Modifier
                             .size(38.dp)
@@ -1582,7 +1495,6 @@ fun RateItemCard(
                         stripeBg
                     }
                 )
-                .graphicsLayer { alpha = rowAlpha }
                 .pointerInput(isSelectionMode) {
                     if (!isSelectionMode) {
                         detectHorizontalDragGestures(
@@ -1607,15 +1519,13 @@ fun RateItemCard(
                     }
                 }
                 .combinedClickable(
-                    interactionSource = interactionSource,
-                    indication = null,
                     onClick = {
                         if (offsetX != 0f) {
                             offsetX = 0f
                         } else if (isSelectionMode) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onToggleSelect()
-                        } else if (item.hasVariants()) {
+                        } else if (hasVariants) {
                             isExpanded = !isExpanded
                         } else {
                             onViewHistory(null)
@@ -1676,15 +1586,9 @@ fun RateItemCard(
 
                     Spacer(modifier = Modifier.width(8.dp))
 
-                    if (!item.hasVariants()) {
-                        // 2. BUY VALUE (Right aligned: tabular numerals, muted gray)
-                        val unitSuffix = if (item.unit.isNotBlank()) "/${item.unit.lowercase()}" else "/unit"
-                        val effectiveUnitRate = if (item.qty > 0) item.buyRate / item.qty else item.buyRate
-                        val formattedBuyRate = if (effectiveUnitRate % 1.0 == 0.0) {
-                            "$currencySymbol${effectiveUnitRate.toLong()}$unitSuffix"
-                        } else {
-                            "$currencySymbol${String.format(java.util.Locale.US, "%.2f", effectiveUnitRate)}$unitSuffix"
-                        }
+                    if (!hasVariants) {
+                        // 2. BUY VALUE (Pre-cached on RateItemEntity, zero per-frame String.format)
+                        val formattedBuyRate = item.getFormattedBuyRate(currencySymbol)
                         Text(
                             text = formattedBuyRate,
                             style = MaterialTheme.typography.bodyMedium.copy(
@@ -1700,16 +1604,10 @@ fun RateItemCard(
 
                         Spacer(modifier = Modifier.width(10.dp))
 
-                        // 3. SELL VALUE + Optional Counter Pill
-                        val hasSell = (item.sellPriceStr.isNotBlank() && item.sellPriceStr != "0.00" && item.sellPriceStr != "0") || item.sellPrice > 0
-                        val displaySell = if (item.sellPriceStr.isNotBlank()) {
-                            item.sellPriceStr
-                        } else if (item.sellPrice > 0) {
-                            "$currencySymbol${if (item.sellPrice % 1.0 == 0.0) item.sellPrice.toLong().toString() else String.format(java.util.Locale.US, "%.2f", item.sellPrice)}"
-                        } else {
-                            "${currencySymbol}0.00"
-                        }
-                        val numericSellPrice = if (item.sellPrice > 0.0) item.sellPrice else MoneyMath.parseMoneyFromUserInput(item.sellPriceStr).toRupeesDouble()
+                        // 3. SELL VALUE + Optional Counter Pill (Pre-cached on RateItemEntity)
+                        val hasSell = item.hasValidSellPrice
+                        val displaySell = item.getFormattedSellPrice(currencySymbol)
+                        val numericSellPrice = item.numericSellPrice
 
                         Row(
                             modifier = Modifier.weight(1.05f),
@@ -1773,24 +1671,19 @@ fun RateItemCard(
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "${item.getVariants().size} sizes",
+                                        text = "${item.variants.size} sizes",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
-                                        color = if (isDark) Color(0xFF8E8E93) else Color(0xFF8E8E93)
+                                        color = Color(0xFF8E8E93)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    val rotation by animateFloatAsState(
-                                        targetValue = if (isExpanded) 180f else 0f,
-                                        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-                                        label = "chevronRotation"
-                                    )
                                     Icon(
                                         imageVector = Icons.Default.KeyboardArrowDown,
                                         contentDescription = if (isExpanded) "Collapse variants" else "Expand variants",
-                                        tint = if (isDark) Color(0xFF8E8E93) else Color(0xFF8E8E93),
+                                        tint = Color(0xFF8E8E93),
                                         modifier = Modifier
                                             .size(16.dp)
-                                            .graphicsLayer { rotationZ = rotation }
+                                            .graphicsLayer { rotationZ = if (isExpanded) 180f else 0f }
                                     )
                                 }
                             }
@@ -1798,12 +1691,8 @@ fun RateItemCard(
                     }
                 }
 
-                // Expanded Multi-Variant Accordion Table (iOS Inset Grouped Section Style)
-                AnimatedVisibility(
-                    visible = isExpanded && item.hasVariants(),
-                    enter = expandVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)) + fadeIn(tween(180)),
-                    exit = shrinkVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) + fadeOut(tween(150))
-                ) {
+                // Expanded Multi-Variant Accordion Table (Only composed when expanded)
+                if (isExpanded && hasVariants) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1818,8 +1707,7 @@ fun RateItemCard(
                                 .fillMaxWidth()
                                 .padding(vertical = 2.dp)
                         ) {
-                            // Table Rows with 1px Hairline Dividers (iOS Grouped Style)
-                            item.getVariants().forEachIndexed { index, v ->
+                            item.variants.forEachIndexed { index, v ->
                                 if (index > 0) {
                                     HorizontalDivider(
                                         color = if (isDark) Color(0xFF38383A) else Color(0xFFE5E5EA),
@@ -1828,22 +1716,11 @@ fun RateItemCard(
                                     )
                                 }
 
-                                val vUnitSuffix = if (v.unit.isNotBlank()) "/${v.unit.lowercase()}" else ""
-                                val vEffective = if (v.qty > 0) v.buyRate / v.qty else v.buyRate
-                                val vBuyStr = if (v.buyRate > 0) {
-                                    if (vEffective % 1.0 == 0.0) "$currencySymbol${vEffective.toLong()}$vUnitSuffix"
-                                    else "$currencySymbol${String.format(java.util.Locale.US, "%.2f", vEffective)}$vUnitSuffix"
-                                } else "-"
-
-                                val vSellStr = if (v.sellPriceStr.isNotBlank() && v.sellPriceStr != "0.00" && v.sellPriceStr != "0") {
-                                    v.sellPriceStr
-                                } else if (v.sellPrice > 0) {
-                                    "$currencySymbol${if (v.sellPrice % 1.0 == 0.0) v.sellPrice.toLong().toString() else String.format(java.util.Locale.US, "%.2f", v.sellPrice)}"
-                                } else "-"
-
+                                val vBuyStr = v.getFormattedBuyRate(currencySymbol)
+                                val vSellStr = v.getFormattedSellPrice(currencySymbol)
                                 val variantCartKey = "${item.id}_${v.id}"
-                                val variantQty = variantCartQuantities[variantCartKey]?.quantity ?: 0.0
-                                val vNumericPrice = if (v.sellPrice > 0.0) v.sellPrice else MoneyMath.parseMoneyFromUserInput(v.sellPriceStr).toRupeesDouble()
+                                val variantQty = variantCartSnapshot.quantities[variantCartKey]?.quantity ?: 0.0
+                                val vNumericPrice = v.numericSellPrice
 
                                 Row(
                                     modifier = Modifier
@@ -1858,7 +1735,6 @@ fun RateItemCard(
                                         .padding(horizontal = 12.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Variant label
                                     Text(
                                         text = v.label,
                                         style = MaterialTheme.typography.bodyMedium,
@@ -1869,7 +1745,6 @@ fun RateItemCard(
                                         modifier = Modifier.weight(1.2f)
                                     )
 
-                                    // Buy rate
                                     Text(
                                         text = vBuyStr,
                                         style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
@@ -1880,7 +1755,6 @@ fun RateItemCard(
                                         modifier = Modifier.weight(0.95f)
                                     )
 
-                                    // Sell price
                                     Text(
                                         text = vSellStr,
                                         style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
@@ -1892,23 +1766,24 @@ fun RateItemCard(
                                         modifier = Modifier.weight(0.95f)
                                     )
 
-                                    // Action buttons + Quick Cart Stepper
                                     Row(
                                         modifier = Modifier.padding(start = 6.dp),
                                         horizontalArrangement = Arrangement.End,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        QuickCartStepperPill(
-                                            quantity = variantQty,
-                                            onIncrement = {
-                                                onAdjustCartQty(variantCartKey, "${item.name} (${v.label})", vNumericPrice, 1.0)
-                                            },
-                                            onDecrement = {
-                                                onAdjustCartQty(variantCartKey, "${item.name} (${v.label})", vNumericPrice, -1.0)
-                                            }
-                                        )
+                                        if (isCounterMode || isCompactView || variantQty > 0.0) {
+                                            QuickCartStepperPill(
+                                                quantity = variantQty,
+                                                onIncrement = {
+                                                    onAdjustCartQty(variantCartKey, "${item.name} (${v.label})", vNumericPrice, 1.0)
+                                                },
+                                                onDecrement = {
+                                                    onAdjustCartQty(variantCartKey, "${item.name} (${v.label})", vNumericPrice, -1.0)
+                                                }
+                                            )
 
-                                        Spacer(modifier = Modifier.width(4.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
 
                                         IconButton(
                                             onClick = { onUpdateRateClick() },
@@ -2006,7 +1881,11 @@ fun QuickUpdateRateDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(variants) { v ->
+                        items(
+                            items = variants,
+                            key = { v -> v.id },
+                            contentType = { "variant_chip" }
+                        ) { v ->
                             val isSel = v.id == selectedVariantId
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -2294,7 +2173,8 @@ fun VerticalUnitWheelPicker(
         ) {
             itemsIndexed(
                 items = units,
-                key = { index, u -> "${index}_$u" }
+                key = { _, u -> "unit_wheel_$u" },
+                contentType = { _, _ -> "unit_wheel_item" }
             ) { index, u ->
                 val isSelected = index == settledIndex
                 Box(
@@ -2652,7 +2532,11 @@ fun AddEditItemSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(activeCategories) { cat ->
+                        items(
+                            items = activeCategories,
+                            key = { cat -> "sheet_cat_$cat" },
+                            contentType = { "sheet_category_pill" }
+                        ) { cat ->
                             val isSelected = cat == category
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
@@ -2681,7 +2565,10 @@ fun AddEditItemSheet(
                             }
                         }
 
-                        item(key = "pick_vector_icon_btn") {
+                        item(
+                            key = "pick_vector_icon_btn",
+                            contentType = "pick_vector_icon_btn"
+                        ) {
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
@@ -2917,8 +2804,11 @@ fun AddEditItemSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            items(unitOptions.size) { idx ->
-                                val u = unitOptions[idx]
+                            items(
+                                items = unitOptions,
+                                key = { u -> "unit_seg_$u" },
+                                contentType = { "unit_segment" }
+                            ) { u ->
                                 val isSelectedUnit = u.equals(unit, ignoreCase = true)
                                 Surface(
                                     onClick = {
@@ -3715,8 +3605,11 @@ fun PriceHistorySheet(
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    items(historyList.size) { index ->
-                        val point = historyList[index]
+                    itemsIndexed(
+                        items = historyList,
+                        key = { _, point -> "${point.date}_${point.sellPrice}_${point.buyRate}" },
+                        contentType = { _, _ -> "price_history_row" }
+                    ) { index, point ->
 
                         Card(
                             colors = CardDefaults.cardColors(

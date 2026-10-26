@@ -11,6 +11,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.spring
@@ -92,11 +94,17 @@ class MainActivity : ComponentActivity() {
                         LoginScreen(
                             isCheckingAuth = state.isCheckingAuth,
                             isSigningIn = state.isSigningIn,
+                            onSignInWithGoogle = { ctx ->
+                                viewModel.signInWithGoogle(ctx)
+                            },
                             onSignInWithEmail = { email, pass ->
                                 viewModel.signInWithEmail(email, pass)
                             },
-                            onCreateAccountWithEmail = { email, pass ->
-                                viewModel.createUserWithEmail(email, pass)
+                            onSignUpWithEmail = { email, pass, name ->
+                                viewModel.signUpWithEmail(email, pass, name)
+                            },
+                            onSendPasswordReset = { email ->
+                                viewModel.sendPasswordReset(email)
                             },
                             onContinueOffline = {
                                 isBypassAuth = true
@@ -269,31 +277,60 @@ fun LedgerApp(
                             .padding(innerPadding)
                             .consumeWindowInsets(innerPadding)
                     ) {
-                        // Detailed Customer Screen View takes priority if a customer is selected
-                        if (state.selectedCustomerWithBalance != null) {
-                            val selCustTransactions by viewModel.selectedCustomerTransactions.collectAsState(initial = emptyList())
+                        // Shared-axis spring transition between Customer Detail view and Main Tab views
+                        AnimatedContent(
+                            targetState = state.selectedCustomerWithBalance,
+                            transitionSpec = {
+                                if (targetState != null) {
+                                    // Opening customer detail: slide in from right with spring + subtle scale
+                                    (slideInHorizontally(
+                                        initialOffsetX = { fullWidth -> fullWidth / 3 },
+                                        animationSpec = spring(dampingRatio = 0.80f, stiffness = 400f)
+                                    ) + fadeIn(animationSpec = tween(200))).togetherWith(
+                                        slideOutHorizontally(
+                                            targetOffsetX = { fullWidth -> -fullWidth / 5 },
+                                            animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)
+                                        ) + fadeOut(animationSpec = tween(160))
+                                    )
+                                } else {
+                                    // Returning to main tabs: slide back from left with spring
+                                    (slideInHorizontally(
+                                        initialOffsetX = { fullWidth -> -fullWidth / 4 },
+                                        animationSpec = spring(dampingRatio = 0.80f, stiffness = 400f)
+                                    ) + fadeIn(animationSpec = tween(200))).togetherWith(
+                                        slideOutHorizontally(
+                                            targetOffsetX = { fullWidth -> fullWidth / 3 },
+                                            animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)
+                                        ) + fadeOut(animationSpec = tween(160))
+                                    )
+                                }
+                            },
+                            label = "CustomerDetailSharedAxisTransition"
+                        ) { activeCustomerWithBalance ->
+                            if (activeCustomerWithBalance != null) {
+                                val selCustTransactions by viewModel.selectedCustomerTransactions.collectAsState(initial = emptyList())
 
-                            CustomerDetailScreen(
-                                customerWithBalance = state.selectedCustomerWithBalance!!,
-                                transactions = selCustTransactions,
-                                currencySymbol = state.currencySymbol,
-                                businessName = state.businessName,
-                                businessPhone = state.businessPhone,
-                                businessAddress = state.businessAddress,
-                                upiId = state.upiId,
-                                invoices = state.invoices,
-                                onBackClick = { viewModel.selectCustomer(null) },
-                                onAddTransactionClick = { type ->
-                                    initialTxnType = type
-                                    showAddTransactionDialog = true
-                                },
-                                onDeleteTransaction = { txn -> viewModel.deleteTransaction(txn) },
-                                onUpdateTransaction = { txn -> viewModel.updateTransaction(txn) },
-                                onUpdateCustomer = { cust -> viewModel.updateCustomer(cust) },
-                                onDeleteCustomer = { id -> viewModel.deleteCustomer(id) },
-                                onDeleteSelectedTransactions = { txns -> viewModel.deleteSelectedTransactions(txns) }
-                            )
-                        } else {
+                                CustomerDetailScreen(
+                                    customerWithBalance = activeCustomerWithBalance,
+                                    transactions = selCustTransactions,
+                                    currencySymbol = state.currencySymbol,
+                                    businessName = state.businessName,
+                                    businessPhone = state.businessPhone,
+                                    businessAddress = state.businessAddress,
+                                    upiId = state.upiId,
+                                    invoices = state.invoices,
+                                    onBackClick = { viewModel.selectCustomer(null) },
+                                    onAddTransactionClick = { type ->
+                                        initialTxnType = type
+                                        showAddTransactionDialog = true
+                                    },
+                                    onDeleteTransaction = { txn -> viewModel.deleteTransaction(txn) },
+                                    onUpdateTransaction = { txn -> viewModel.updateTransaction(txn) },
+                                    onUpdateCustomer = { cust -> viewModel.updateCustomer(cust) },
+                                    onDeleteCustomer = { id -> viewModel.deleteCustomer(id) },
+                                    onDeleteSelectedTransactions = { txns -> viewModel.deleteSelectedTransactions(txns) }
+                                )
+                            } else {
                             AnimatedContent(
                                 targetState = selectedTab,
                                 transitionSpec = {
@@ -392,6 +429,9 @@ fun LedgerApp(
                                         onDeleteAuditLog = { logId -> viewModel.deleteAuditLog(logId) },
                                         onClearAuditLogs = { viewModel.clearAuditHistory() },
                                         onSignOut = { viewModel.signOut() },
+                                        onSignInWithGoogle = { ctx -> viewModel.signInWithGoogle(ctx) },
+                                        onSignInWithEmail = { email, pass -> viewModel.signInWithEmail(email, pass) },
+                                        onSignUpWithEmail = { email, pass, name -> viewModel.signUpWithEmail(email, pass, name) },
                                         onTriggerCloudSync = { viewModel.triggerCloudSync() },
                                         onToggleDarkMode = { enabled -> viewModel.setDarkMode(enabled) },
                                         onSetLanguage = { lang -> viewModel.setLanguage(lang) },
@@ -409,6 +449,8 @@ fun LedgerApp(
                                     )
                                 }
                             }
+                            }
+                        }
 
                             // Expandable Speed-Dial FAB Menu (Visible on Tab 1 / Ledger)
                             if (selectedTab == 1 && state.selectedCustomerWithBalance == null) {
@@ -431,11 +473,17 @@ fun LedgerApp(
                                 )
                             }
 
-                            // Floating Glassmorphic Pill Navigation Bar + FAB (Smoothly hidden while multi-selection mode is active)
+                            // Floating Glassmorphic Pill Navigation Bar + FAB (Smoothly hidden while viewing a customer's history or in multi-selection mode)
                             androidx.compose.animation.AnimatedVisibility(
-                                visible = !isRateItemSelectionMode,
-                                enter = fadeIn(animationSpec = tween(180)),
-                                exit = fadeOut(animationSpec = tween(180)),
+                                visible = !isRateItemSelectionMode && state.selectedCustomerWithBalance == null,
+                                enter = slideInVertically(
+                                    initialOffsetY = { it },
+                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)
+                                ) + fadeIn(animationSpec = tween(180)),
+                                exit = slideOutVertically(
+                                    targetOffsetY = { it },
+                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 400f)
+                                ) + fadeOut(animationSpec = tween(180)),
                                 modifier = Modifier.align(Alignment.BottomCenter)
                             ) {
                                 FloatingPillNavigation(
@@ -460,7 +508,6 @@ fun LedgerApp(
                             }
                         }
                     }
-                }
 
                 // --- HARDWARE BACK BUTTON INTERCEPTION ---
                 // Intercept back gesture so modals, customer details, or subtabs are dismissed without exiting the app

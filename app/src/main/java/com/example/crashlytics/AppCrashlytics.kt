@@ -18,15 +18,6 @@ object AppCrashlytics {
     fun logEvent(event: String) {
         Log.d(TAG, "Breadcrumb: $event")
     }
-
-    /**
-     * Diagnostic health check verification (safe non-fatal log instead of crashing process)
-     */
-    fun triggerTestCrash() {
-        recordNonFatal(
-            RuntimeException("Diagnostic health check triggered from Settings"),
-            contextTag = "settings_diagnostic_test"
-        )
-    }
 }
+
 

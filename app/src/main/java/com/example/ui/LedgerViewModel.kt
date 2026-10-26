@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import com.example.ui.i18n.AppLanguage
 import org.json.JSONArray
@@ -24,7 +25,7 @@ import org.json.JSONObject
 import java.util.Calendar
 import java.util.UUID
 
-@Stable
+@Immutable
 data class LedgerUiState(
     val summary: BusinessSummary = BusinessSummary(),
     val customers: List<CustomerWithBalance> = emptyList(),
@@ -105,8 +106,10 @@ sealed interface LedgerEvent {
     data class OnRestoreAuditLog(val log: AuditLogEntity) : LedgerEvent
     object OnClearAuditHistory : LedgerEvent
     object OnClearUserMessage : LedgerEvent
+    data class OnSignInWithGoogle(val context: android.content.Context) : LedgerEvent
     data class OnSignInWithEmail(val email: String, val pass: String) : LedgerEvent
-    data class OnCreateUserWithEmail(val email: String, val pass: String) : LedgerEvent
+    data class OnSignUpWithEmail(val email: String, val pass: String, val name: String = "") : LedgerEvent
+    data class OnSendPasswordReset(val email: String) : LedgerEvent
     object OnSignOut : LedgerEvent
     object OnTriggerCloudSync : LedgerEvent
 }
@@ -513,10 +516,36 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             is LedgerEvent.OnRestoreAuditLog -> restoreAuditLog(event.log)
             is LedgerEvent.OnClearAuditHistory -> clearAuditHistory()
             is LedgerEvent.OnClearUserMessage -> clearUserMessage()
+            is LedgerEvent.OnSignInWithGoogle -> signInWithGoogle(event.context)
             is LedgerEvent.OnSignInWithEmail -> signInWithEmail(event.email, event.pass)
-            is LedgerEvent.OnCreateUserWithEmail -> createUserWithEmail(event.email, event.pass)
+            is LedgerEvent.OnSignUpWithEmail -> signUpWithEmail(event.email, event.pass, event.name)
+            is LedgerEvent.OnSendPasswordReset -> sendPasswordReset(event.email)
             is LedgerEvent.OnSignOut -> signOut()
             is LedgerEvent.OnTriggerCloudSync -> triggerCloudSync()
+        }
+    }
+
+    fun signInWithGoogle(activityContext: android.content.Context) {
+        viewModelScope.launch {
+            _isSigningIn.value = true
+            _userMessage.value = null
+            try {
+                when (val result = authManager.signInWithGoogle(activityContext)) {
+                    is AuthResult.Success -> {
+                        _userMessage.value = "Signed in as ${result.user.email ?: result.user.displayName ?: "Google User"}"
+                        syncManager.performFullTwoWaySync()
+                    }
+                    is AuthResult.Cancelled -> {
+                        _userMessage.value = null
+                    }
+                    is AuthResult.Error -> {
+                        _userMessage.value = result.message
+                    }
+                    is AuthResult.PasswordResetSent -> {}
+                }
+            } finally {
+                _isSigningIn.value = false
+            }
         }
     }
 
@@ -527,7 +556,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 when (val result = authManager.signInWithEmail(email, pass)) {
                     is AuthResult.Success -> {
-                        _userMessage.value = "Signed in as ${result.user.email}"
+                        _userMessage.value = "Signed in as ${result.user.email ?: result.user.displayName ?: "User"}"
                         syncManager.performFullTwoWaySync()
                     }
                     is AuthResult.Cancelled -> {
@@ -536,6 +565,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                     is AuthResult.Error -> {
                         _userMessage.value = result.message
                     }
+                    is AuthResult.PasswordResetSent -> {}
                 }
             } finally {
                 _isSigningIn.value = false
@@ -543,14 +573,14 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun createUserWithEmail(email: String, pass: String) {
+    fun signUpWithEmail(email: String, pass: String, name: String = "") {
         viewModelScope.launch {
             _isSigningIn.value = true
             _userMessage.value = null
             try {
-                when (val result = authManager.createUserWithEmail(email, pass)) {
+                when (val result = authManager.signUpWithEmail(email, pass, name)) {
                     is AuthResult.Success -> {
-                        _userMessage.value = "Account created for ${result.user.email}"
+                        _userMessage.value = "Account created as ${result.user.email ?: "User"}"
                         syncManager.performFullTwoWaySync()
                     }
                     is AuthResult.Cancelled -> {
@@ -559,6 +589,27 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                     is AuthResult.Error -> {
                         _userMessage.value = result.message
                     }
+                    is AuthResult.PasswordResetSent -> {}
+                }
+            } finally {
+                _isSigningIn.value = false
+            }
+        }
+    }
+
+    fun sendPasswordReset(email: String) {
+        viewModelScope.launch {
+            _isSigningIn.value = true
+            _userMessage.value = null
+            try {
+                when (val result = authManager.sendPasswordReset(email)) {
+                    is AuthResult.PasswordResetSent -> {
+                        _userMessage.value = "Password reset link sent to $email"
+                    }
+                    is AuthResult.Error -> {
+                        _userMessage.value = result.message
+                    }
+                    else -> {}
                 }
             } finally {
                 _isSigningIn.value = false

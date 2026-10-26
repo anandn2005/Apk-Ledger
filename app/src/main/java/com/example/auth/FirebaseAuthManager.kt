@@ -1,14 +1,25 @@
 package com.example.auth
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
+import com.example.R
 import com.example.data.AppPreferencesManager
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
-import com.google.firebase.auth.FirebaseAuthInvalidUserException
-import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +41,7 @@ sealed class AuthResult {
     data class Success(val user: AuthUser) : AuthResult()
     data class Error(val message: String, val cause: Throwable? = null) : AuthResult()
     object Cancelled : AuthResult()
+    object PasswordResetSent : AuthResult()
 }
 
 class FirebaseAuthManager(
@@ -52,10 +64,11 @@ class FirebaseAuthManager(
             val user = AuthUser(
                 uid = currentFirebaseUser.uid,
                 email = currentFirebaseUser.email,
-                displayName = currentFirebaseUser.displayName ?: currentFirebaseUser.email?.substringBefore("@") ?: "User",
+                displayName = currentFirebaseUser.displayName ?: currentFirebaseUser.email?.substringBefore("@") ?: "Google User",
                 photoUrl = currentFirebaseUser.photoUrl?.toString()
             )
             _currentUser.value = user
+            cacheUser(user)
         } else {
             _currentUser.value = null
         }
@@ -71,11 +84,10 @@ class FirebaseAuthManager(
                     Log.w(TAG, "Standard Firebase initialization note: ${e.message}")
                 }
 
-                // If still not initialized, consume options directly from the synced google-services.json
                 if (FirebaseApp.getApps(context).isEmpty()) {
-                    val syncedOptions = loadSyncedFirebaseOptions() ?: FirebaseOptions.Builder()
+                    val syncedOptions = FirebaseOptions.Builder()
                         .setApplicationId("1:712978117654:android:0d1edcac25ad1a7252b137")
-                        .setProjectId("ledger--mate")
+                        .setProjectId(context.getString(com.example.R.string.firebase_project_id))
                         .setApiKey("AIzaSyDi5m9Y2VMjj1Ft7SptYYOuxrfSTIGJ-gs")
                         .setStorageBucket("ledger--mate.firebasestorage.app")
                         .setGcmSenderId("712978117654")
@@ -87,50 +99,6 @@ class FirebaseAuthManager(
             }
         } catch (e: Exception) {
             Log.w(TAG, "FirebaseApp initialization note: ${e.message}")
-        }
-    }
-
-    private fun loadSyncedFirebaseOptions(): FirebaseOptions? {
-        return try {
-            val jsonString = context.assets.open("google-services.json").bufferedReader().use { it.readText() }
-            val root = org.json.JSONObject(jsonString)
-            val projInfo = root.getJSONObject("project_info")
-            val projectId = projInfo.getString("project_id")
-            val projectNumber = projInfo.getString("project_number")
-            val firebaseDbUrl = projInfo.optString("firebase_url")
-            val storageBucket = projInfo.optString("storage_bucket")
-
-            val clients = root.getJSONArray("client")
-            var appId = "1:$projectNumber:android:0d1edcac25ad1a7252b137"
-            var apiKey = "AIzaSyDi5m9Y2VMjj1Ft7SptYYOuxrfSTIGJ-gs"
-
-            for (i in 0 until clients.length()) {
-                val clientObj = clients.getJSONObject(i)
-                val cInfo = clientObj.getJSONObject("client_info")
-                val pkgName = cInfo.optJSONObject("android_client_info")?.optString("package_name") ?: ""
-                if (pkgName == context.packageName || i == 0) {
-                    appId = cInfo.optString("mobilesdk_app_id", appId)
-                    val apiKeys = clientObj.optJSONArray("api_key")
-                    if (apiKeys != null && apiKeys.length() > 0) {
-                        apiKey = apiKeys.getJSONObject(0).optString("current_key", apiKey)
-                    }
-                    if (pkgName == context.packageName) break
-                }
-            }
-
-            FirebaseOptions.Builder()
-                .setApplicationId(appId)
-                .setProjectId(projectId)
-                .setApiKey(apiKey)
-                .setGcmSenderId(projectNumber)
-                .apply {
-                    if (firebaseDbUrl.isNotBlank()) setDatabaseUrl(firebaseDbUrl)
-                    if (storageBucket.isNotBlank()) setStorageBucket(storageBucket)
-                }
-                .build()
-        } catch (e: Exception) {
-            Log.d(TAG, "loadSyncedFirebaseOptions asset notice: ${e.message}")
-            null
         }
     }
 
@@ -146,8 +114,26 @@ class FirebaseAuthManager(
         return firebaseAuthInstance
     }
 
+    private fun resolveWebClientId(): String? {
+        return try {
+            context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            Log.w(TAG, "default_web_client_id resource not found: ${e.message}")
+            null
+        }
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var current: Context? = this
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
+
     /**
-     * Silent Sign-In attempt upon application launch
+     * Silent Sign-In attempt upon application launch using Credential Manager GetGoogleIdOption.
      */
     suspend fun attemptSilentSignIn(): AuthUser? {
         val auth = getAuth()
@@ -156,104 +142,214 @@ class FirebaseAuthManager(
             val user = AuthUser(
                 uid = existingUser.uid,
                 email = existingUser.email,
-                displayName = existingUser.displayName ?: existingUser.email?.substringBefore("@") ?: "User",
+                displayName = existingUser.displayName ?: existingUser.email?.substringBefore("@") ?: "Google User",
                 photoUrl = existingUser.photoUrl?.toString()
             )
             _currentUser.value = user
             cacheUser(user)
             return user
         }
-        return null
+
+        val clientId = resolveWebClientId() ?: return null
+        return try {
+            val credentialManager = CredentialManager.create(context)
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setFilterByAuthorizedAccounts(true)
+                .setServerClientId(clientId)
+                .setAutoSelectEnabled(true)
+                .build()
+
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+
+            val result = credentialManager.getCredential(context, request)
+            val credential = result.credential
+            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+                val authResult = awaitTask { auth!!.signInWithCredential(authCredential) }
+                val fUser = authResult.user ?: return null
+                val user = AuthUser(
+                    uid = fUser.uid,
+                    email = fUser.email,
+                    displayName = fUser.displayName ?: fUser.email?.substringBefore("@") ?: "Google User",
+                    photoUrl = fUser.photoUrl?.toString()
+                )
+                _currentUser.value = user
+                cacheUser(user)
+                user
+            } else {
+                null
+            }
+        } catch (e: NoCredentialException) {
+            Log.d(TAG, "Silent auto sign-in: no authorized Google account on device yet")
+            null
+        } catch (e: Exception) {
+            Log.d(TAG, "Silent auto sign-in skipped: ${e.message}")
+            null
+        }
     }
 
     /**
-     * Sign In with Email and Password using FirebaseAuth.
-     * Immediately authenticates without email verification requirements.
+     * Interactive Google Sign-In using Jetpack Credential Manager (GetSignInWithGoogleOption).
+     * Uses a single credential option per request for API 36 responsiveness.
+     */
+    suspend fun signInWithGoogle(activityContext: Context): AuthResult {
+        val auth = getAuth()
+            ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
+        val clientId = resolveWebClientId()
+            ?: return AuthResult.Error("Google Sign-In configuration missing: default_web_client_id not found.")
+
+        val hostActivity = activityContext.findActivity() ?: activityContext
+        val credentialManager = CredentialManager.create(hostActivity)
+
+        val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(signInOption)
+            .build()
+
+        return try {
+            val result = credentialManager.getCredential(hostActivity, request)
+            val credential = result.credential
+            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                val googleIdCred = GoogleIdTokenCredential.createFrom(credential.data)
+                val googleIdToken = googleIdCred.idToken
+                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+                val firebaseResult = awaitTask { auth.signInWithCredential(authCredential) }
+                val fUser = firebaseResult.user
+                    ?: return AuthResult.Error("Google Sign-In failed: Firebase user profile empty.")
+
+                val user = AuthUser(
+                    uid = fUser.uid,
+                    email = fUser.email ?: googleIdCred.id,
+                    displayName = fUser.displayName ?: googleIdCred.displayName ?: fUser.email?.substringBefore("@") ?: "Google User",
+                    photoUrl = (fUser.photoUrl ?: googleIdCred.profilePictureUri)?.toString()
+                )
+                _currentUser.value = user
+                cacheUser(user)
+                AuthResult.Success(user)
+            } else {
+                AuthResult.Error("Unexpected credential type received from Credential Manager.")
+            }
+        } catch (e: GetCredentialCancellationException) {
+            Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+            AuthResult.Cancelled
+        } catch (e: NoCredentialException) {
+            Log.w(TAG, "No Google account found on device: ${e.message}", e)
+            AuthResult.Error("No Google account found on this device. Please add a Google account in Android Settings -> Accounts, or ensure SHA-1 certificate A5:A6:75:2F:68:69:31:C0:F7:33:BC:27:56:31:D3:C9:AD:51:F5:95 is registered in Firebase Console.", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
+            AuthResult.Error(e.localizedMessage ?: "Google Sign-In failed. Please try again.", e)
+        }
+    }
+
+    /**
+     * Email and Password Sign-In via Firebase Auth.
      */
     suspend fun signInWithEmail(email: String, pass: String): AuthResult {
+        val auth = getAuth()
+            ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
         val cleanEmail = email.trim()
-        if (cleanEmail.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
-            return AuthResult.Error("Please enter a valid email address.")
-        }
-        if (pass.length < 6) {
-            return AuthResult.Error("Password must be at least 6 characters.")
+        if (cleanEmail.isBlank() || pass.isBlank()) {
+            return AuthResult.Error("Please enter both email and password.")
         }
         return try {
-            val auth = getAuth() ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
             val result = awaitTask { auth.signInWithEmailAndPassword(cleanEmail, pass) }
-            val fUser = result.user ?: return AuthResult.Error("Sign in failed: User not found.")
+            val fUser = result.user ?: return AuthResult.Error("Sign in failed: user profile is empty.")
             val user = AuthUser(
                 uid = fUser.uid,
-                email = fUser.email ?: cleanEmail,
-                displayName = fUser.displayName ?: cleanEmail.substringBefore("@"),
+                email = fUser.email,
+                displayName = fUser.displayName ?: fUser.email?.substringBefore("@") ?: "User",
                 photoUrl = fUser.photoUrl?.toString()
             )
             _currentUser.value = user
             cacheUser(user)
             AuthResult.Success(user)
         } catch (e: Exception) {
-            Log.e(TAG, "signInWithEmail failed: ${e.message}", e)
-            val friendlyMsg = when {
-                e is FirebaseAuthInvalidUserException ||
-                e.message?.contains("user-not-found", ignoreCase = true) == true ->
-                    "No account found with this email. Tap 'Create Account' to sign up."
-                e is FirebaseAuthInvalidCredentialsException ||
-                e.message?.contains("supplied auth credential", ignoreCase = true) == true ||
-                e.message?.contains("credential is incorrect", ignoreCase = true) == true ||
-                e.message?.contains("invalid-credential", ignoreCase = true) == true ||
-                e.message?.contains("INVALID_LOGIN_CREDENTIALS", ignoreCase = true) == true ||
-                e.message?.contains("malformed", ignoreCase = true) == true ||
-                e.message?.contains("expired", ignoreCase = true) == true ||
-                e.message?.contains("wrong-password", ignoreCase = true) == true ->
-                    "Incorrect password or email not registered. If you are new, tap 'Create Account' below to sign up."
-                e.message?.contains("too-many-requests", ignoreCase = true) == true ->
-                    "Too many failed attempts. Access is temporarily suspended. Please wait a moment or try again later."
-                e.message?.contains("network", ignoreCase = true) == true ->
-                    "Network error. Please check your internet connection."
-                else -> "Sign in failed: ${e.localizedMessage ?: "Invalid credentials"}"
-            }
-            AuthResult.Error(friendlyMsg, e)
+            Log.e(TAG, "Email Sign In failed: ${e.message}", e)
+            AuthResult.Error(formatAuthErrorMessage(e), e)
         }
     }
 
     /**
-     * Create Account with Email and Password using FirebaseAuth.
-     * Strict Constraint: No email verification flow. Immediately creates the session and routes user.
+     * Email and Password Sign-Up (Account Registration) via Firebase Auth.
      */
-    suspend fun createUserWithEmail(email: String, pass: String): AuthResult {
+    suspend fun signUpWithEmail(email: String, pass: String, name: String = ""): AuthResult {
+        val auth = getAuth()
+            ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
         val cleanEmail = email.trim()
-        if (cleanEmail.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
-            return AuthResult.Error("Please enter a valid email address.")
+        if (cleanEmail.isBlank() || pass.isBlank()) {
+            return AuthResult.Error("Please enter both email and password.")
         }
         if (pass.length < 6) {
             return AuthResult.Error("Password must be at least 6 characters.")
         }
         return try {
-            val auth = getAuth() ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
             val result = awaitTask { auth.createUserWithEmailAndPassword(cleanEmail, pass) }
-            val fUser = result.user ?: return AuthResult.Error("Account creation failed.")
+            val fUser = result.user ?: return AuthResult.Error("Account creation failed: user profile is empty.")
+            val cleanName = name.trim()
+            if (cleanName.isNotBlank()) {
+                try {
+                    val profileUpdates = com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                        .setDisplayName(cleanName)
+                        .build()
+                    awaitTask { fUser.updateProfile(profileUpdates) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to update profile name: ${e.message}")
+                }
+            }
             val user = AuthUser(
                 uid = fUser.uid,
-                email = fUser.email ?: cleanEmail,
-                displayName = fUser.displayName ?: cleanEmail.substringBefore("@"),
+                email = fUser.email,
+                displayName = cleanName.ifBlank { fUser.displayName ?: fUser.email?.substringBefore("@") ?: "User" },
                 photoUrl = fUser.photoUrl?.toString()
             )
             _currentUser.value = user
             cacheUser(user)
             AuthResult.Success(user)
         } catch (e: Exception) {
-            Log.e(TAG, "createUserWithEmail failed: ${e.message}", e)
-            val friendlyMsg = when {
-                e is FirebaseAuthUserCollisionException ||
-                e.message?.contains("email-already-in-use", ignoreCase = true) == true ->
-                    "An account with this email already exists. Tap 'Sign In' instead."
-                e.message?.contains("weak-password", ignoreCase = true) == true ->
-                    "Password is too weak. Please use at least 6 characters."
-                e.message?.contains("network", ignoreCase = true) == true ->
-                    "Network error. Please check your internet connection."
-                else -> e.message ?: "Account creation failed"
-            }
-            AuthResult.Error(friendlyMsg, e)
+            Log.e(TAG, "Email Sign Up failed: ${e.message}", e)
+            AuthResult.Error(formatAuthErrorMessage(e), e)
+        }
+    }
+
+    /**
+     * Sends password reset email link via Firebase Auth.
+     */
+    suspend fun sendPasswordReset(email: String): AuthResult {
+        val auth = getAuth()
+            ?: return AuthResult.Error("Firebase Authentication service unavailable on device.")
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank()) {
+            return AuthResult.Error("Please enter your email to receive a password reset link.")
+        }
+        return try {
+            awaitTask { auth.sendPasswordResetEmail(cleanEmail) }
+            AuthResult.PasswordResetSent
+        } catch (e: Exception) {
+            Log.e(TAG, "Password reset failed: ${e.message}", e)
+            AuthResult.Error(formatAuthErrorMessage(e), e)
+        }
+    }
+
+    private fun formatAuthErrorMessage(e: Exception): String {
+        val msg = e.message ?: return "Authentication failed. Please check your credentials."
+        return when {
+            msg.contains("invalid-credential", ignoreCase = true) ||
+            msg.contains("wrong-password", ignoreCase = true) ->
+                "Incorrect email or password. Please verify and try again."
+            msg.contains("user-not-found", ignoreCase = true) ->
+                "No account found with this email. Switch to Create Account to register."
+            msg.contains("email-already-in-use", ignoreCase = true) ->
+                "An account already exists with this email. Please sign in instead."
+            msg.contains("weak-password", ignoreCase = true) ->
+                "Password is too weak. Please use at least 6 characters."
+            msg.contains("invalid-email", ignoreCase = true) ->
+                "Please enter a valid email address."
+            msg.contains("network", ignoreCase = true) ->
+                "Network connection issue. Please check your internet connection."
+            else -> msg
         }
     }
 
@@ -262,6 +358,13 @@ class FirebaseAuthManager(
             getAuth()?.signOut()
         } catch (e: Exception) {
             Log.w(TAG, "Error during Firebase signOut: ${e.message}")
+        }
+        scope.launch {
+            try {
+                CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clear CredentialManager state: ${e.message}")
+            }
         }
         _currentUser.value = null
         prefs.cachedUserEmail = ""

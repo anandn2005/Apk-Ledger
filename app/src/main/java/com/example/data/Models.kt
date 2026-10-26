@@ -189,6 +189,37 @@ data class RateVariant(
         ""
     }
 
+    val numericSellPrice: Double by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        if (sellPrice > 0.0) sellPrice
+        else MoneyMath.parseMoneyFromUserInput(sellPriceStr).toRupeesDouble()
+    }
+
+    private val cachedBuyNumberStr: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        if (buyRate <= 0.0) return@lazy ""
+        val effective = if (qty > 0.0) buyRate / qty else buyRate
+        if (effective % 1.0 == 0.0) effective.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", effective)
+    }
+
+    private val cachedUnitSuffix: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        if (unit.isNotBlank()) "/${unit.lowercase()}" else ""
+    }
+
+    fun getFormattedBuyRate(currencySymbol: String): String {
+        if (cachedBuyNumberStr.isEmpty()) return "-"
+        return "$currencySymbol$cachedBuyNumberStr$cachedUnitSuffix"
+    }
+
+    fun getFormattedSellPrice(currencySymbol: String): String {
+        if (sellPriceStr.isNotBlank() && sellPriceStr != "0.00" && sellPriceStr != "0") {
+            return sellPriceStr
+        }
+        if (sellPrice > 0) {
+            return "$currencySymbol$cachedDisplaySellPrice"
+        }
+        return "-"
+    }
+
     fun getDisplaySellPrice(): String = cachedDisplaySellPrice
 }
 
@@ -251,12 +282,17 @@ data class RateItemEntity(
         (hasMultipleVariants || (variantsJson.isNotBlank() && variantsJson != "[]")) && cachedVariants.isNotEmpty()
     }
 
+    @get:androidx.room.Ignore
+    @get:JvmName("variantsList")
+    val variants: List<RateVariant>
+        get() = if (cachedHasVariants) cachedVariants else emptyList()
+
     @delegate:androidx.room.Ignore
     private val cachedDisplaySellPrice: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (cachedHasVariants) {
-            val variants = cachedVariants
-            if (variants.isNotEmpty()) {
-                val prices = variants.map { it.getDisplaySellPrice() }
+            val vList = cachedVariants
+            if (vList.isNotEmpty()) {
+                val prices = vList.map { it.getDisplaySellPrice() }
                 return@lazy prices.joinToString(" / ")
             }
         }
@@ -271,11 +307,46 @@ data class RateItemEntity(
     }
 
     @delegate:androidx.room.Ignore
+    val numericSellPrice: Double by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        if (sellPrice > 0.0) sellPrice
+        else MoneyMath.parseMoneyFromUserInput(sellPriceStr).toRupeesDouble()
+    }
+
+    @delegate:androidx.room.Ignore
+    val hasValidSellPrice: Boolean by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        (sellPriceStr.isNotBlank() && sellPriceStr != "0.00" && sellPriceStr != "0") || sellPrice > 0.0
+    }
+
+    @delegate:androidx.room.Ignore
+    private val cachedBuyNumberStr: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        val effectiveUnitRate = if (qty > 0.0) buyRate / qty else buyRate
+        if (effectiveUnitRate % 1.0 == 0.0) {
+            effectiveUnitRate.toLong().toString()
+        } else {
+            String.format(java.util.Locale.US, "%.2f", effectiveUnitRate)
+        }
+    }
+
+    @delegate:androidx.room.Ignore
+    private val cachedUnitSuffix: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        if (unit.isNotBlank()) "/${unit.lowercase()}" else "/unit"
+    }
+
+    @delegate:androidx.room.Ignore
     val searchTokens: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
         val variantTokens = if (cachedHasVariants) {
             cachedVariants.joinToString(" ") { it.label.lowercase() }
         } else ""
         "${name.lowercase()} ${category.lowercase()} $variantTokens"
+    }
+
+    fun getFormattedBuyRate(currencySymbol: String): String =
+        "$currencySymbol$cachedBuyNumberStr$cachedUnitSuffix"
+
+    fun getFormattedSellPrice(currencySymbol: String): String {
+        if (sellPriceStr.isNotBlank()) return sellPriceStr
+        if (sellPrice > 0.0) return "$currencySymbol$cachedDisplaySellPrice"
+        return "${currencySymbol}0.00"
     }
 
     fun getDisplaySellPrice(): String = cachedDisplaySellPrice
@@ -343,7 +414,7 @@ data class PriceHistoryEntity(
     val timestamp: Long = System.currentTimeMillis()
 )
 
-@Stable
+@Immutable
 data class CustomerWithBalance(
     val customer: CustomerEntity,
     val totalGave: Double = 0.0,
@@ -360,7 +431,7 @@ data class DailyTrendPoint(
     val timestamp: Long
 )
 
-@Stable
+@Immutable
 data class BusinessSummary(
     val totalReceivable: Double = 0.0,
     val totalPayable: Double = 0.0,
@@ -371,3 +442,4 @@ data class BusinessSummary(
     val totalInvoicesAmount: Double = 0.0,
     val sevenDayTrend: List<DailyTrendPoint> = emptyList()
 )
+

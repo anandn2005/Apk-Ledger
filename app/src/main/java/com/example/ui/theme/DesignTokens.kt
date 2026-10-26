@@ -147,7 +147,7 @@ fun Modifier.softCardShadow(
 )
 
 // ============================================================
-// 5) ANIMATED BALANCE / NUMBER COUNT TEXT (Tabular Figures)
+// 5) TABULAR BALANCE / NUMBER DISPLAY TEXT (120 FPS Zero-Jank)
 // ============================================================
 @Composable
 fun AnimatedBalanceText(
@@ -157,40 +157,17 @@ fun AnimatedBalanceText(
     color: Color = MaterialTheme.colorScheme.onSurface,
     modifier: Modifier = Modifier
 ) {
-    val animatedAmount by animateFloatAsState(
-        targetValue = amount.toFloat(),
-        animationSpec = spring(
-            dampingRatio = 0.8f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "balanceCountAnimation"
+    val formatted = remember(amount, currencySymbol) {
+        com.example.ui.Formatters.formatCurrency(amount, currencySymbol)
+    }
+
+    Text(
+        text = formatted,
+        style = style.tabularNumbers(),
+        color = color,
+        maxLines = 1,
+        modifier = modifier
     )
-
-    val formatted = remember(animatedAmount, currencySymbol) {
-        val whole = animatedAmount.toLong()
-        val isWhole = (animatedAmount - whole) == 0f
-        if (isWhole) {
-            String.format(java.util.Locale.US, "%s%,d", currencySymbol, whole)
-        } else {
-            String.format(java.util.Locale.US, "%s%,.2f", currencySymbol, animatedAmount)
-        }
-    }
-
-    AnimatedContent(
-        targetState = formatted,
-        transitionSpec = {
-            (slideInVertically(animationSpec = tween(180)) { height -> height / 3 } + fadeIn(tween(180)))
-                .togetherWith(slideOutVertically(animationSpec = tween(180)) { height -> -height / 3 } + fadeOut(tween(180)))
-        },
-        label = "animatedBalanceText"
-    ) { targetText ->
-        Text(
-            text = targetText,
-            style = style.tabularNumbers(),
-            color = color,
-            modifier = modifier
-        )
-    }
 }
 
 // ============================================================
