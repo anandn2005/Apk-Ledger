@@ -128,6 +128,7 @@ fun CustomersScreen(
     onTriggerCloudSync: () -> Unit = {},
     onDailyClosingClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenNotes: () -> Unit = {},
     onQuickEntryForCustomer: ((customerId: String, txnType: String) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -323,6 +324,11 @@ fun CustomersScreen(
                                             )
                                         }
                                     }
+
+                                    NotesHeaderIconButton(
+                                        hasDueReminder = state.hasDueOrOverdueNoteReminder,
+                                        onClick = onOpenNotes
+                                    )
 
                                     CloudSyncStatusBadge(
                                         syncState = state.syncState,

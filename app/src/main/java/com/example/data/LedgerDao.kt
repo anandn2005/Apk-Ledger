@@ -173,4 +173,39 @@ interface LedgerDao {
 
     @Query("DELETE FROM price_history WHERE itemId = :itemId")
     suspend fun deletePriceHistoryForItem(itemId: String)
+
+    // --- NOTES ---
+    @Query("SELECT * FROM notes ORDER BY updatedAt DESC")
+    fun getAllNotes(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes ORDER BY updatedAt DESC")
+    suspend fun getAllNotesList(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes WHERE id = :id LIMIT 1")
+    suspend fun getNoteById(id: String): NoteEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNote(note: NoteEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotes(notes: List<NoteEntity>)
+
+    @Update
+    suspend fun updateNote(note: NoteEntity)
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun deleteNoteById(id: String)
+
+    @Query("DELETE FROM notes WHERE id IN (:ids)")
+    suspend fun deleteNotesByIds(ids: List<String>)
+
+    @Query("UPDATE notes SET label = :newLabel, updatedAt = :timestamp WHERE label = :oldLabel")
+    suspend fun reassignNoteLabel(oldLabel: String, newLabel: String, timestamp: Long)
+
+    @Query("UPDATE notes SET linkedCustomerId = '', linkedCustomerName = '', updatedAt = :timestamp WHERE linkedCustomerId = :customerId")
+    suspend fun unlinkCustomerFromNotes(customerId: String, timestamp: Long)
+
+    @Query("UPDATE notes SET linkedCustomerId = '', linkedCustomerName = '', updatedAt = :timestamp WHERE linkedCustomerId IN (:customerIds)")
+    suspend fun unlinkCustomersFromNotes(customerIds: List<String>, timestamp: Long)
 }
+

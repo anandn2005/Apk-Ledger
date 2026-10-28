@@ -61,11 +61,15 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: LedgerViewModel by viewModels()
     private var pendingShortcutAction by mutableStateOf<String?>(null)
+    private var pendingNoteIdToOpen by mutableStateOf<String?>(null)
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingShortcutAction = intent.action
+        if (intent.action == com.example.notes.NoteReminderScheduler.ACTION_OPEN_NOTE) {
+            pendingNoteIdToOpen = intent.getStringExtra(com.example.notes.NoteReminderScheduler.EXTRA_NOTE_ID)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +77,9 @@ class MainActivity : ComponentActivity() {
         window.decorView.setBackgroundColor(android.graphics.Color.parseColor("#FAFCF9"))
         enableEdgeToEdge()
         pendingShortcutAction = intent?.action
+        if (intent?.action == com.example.notes.NoteReminderScheduler.ACTION_OPEN_NOTE) {
+            pendingNoteIdToOpen = intent?.getStringExtra(com.example.notes.NoteReminderScheduler.EXTRA_NOTE_ID)
+        }
 
         // Cold-Start Acceleration: Pre-warm Firebase Auth and core configs on background IO dispatcher concurrently
         lifecycleScope.launch(Dispatchers.IO) {
@@ -116,7 +123,9 @@ class MainActivity : ComponentActivity() {
                         LedgerApp(
                             viewModel = viewModel,
                             shortcutAction = pendingShortcutAction,
-                            onClearShortcutAction = { pendingShortcutAction = null }
+                            pendingNoteIdToOpen = pendingNoteIdToOpen,
+                            onClearShortcutAction = { pendingShortcutAction = null },
+                            onClearPendingNoteId = { pendingNoteIdToOpen = null }
                         )
                     }
                 }
@@ -130,7 +139,9 @@ class MainActivity : ComponentActivity() {
 fun LedgerApp(
     viewModel: LedgerViewModel,
     shortcutAction: String? = null,
-    onClearShortcutAction: () -> Unit = {}
+    pendingNoteIdToOpen: String? = null,
+    onClearShortcutAction: () -> Unit = {},
+    onClearPendingNoteId: () -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -155,9 +166,19 @@ fun LedgerApp(
     var quickEntryType by remember { mutableStateOf(TransactionType.GAVE_CREDIT.name) }
     var activeDateForQuickEntry by remember { mutableStateOf<Long?>(null) }
     var isRateItemSelectionMode by remember { mutableStateOf(false) }
+    var showNotesSheet by remember { mutableStateOf(false) }
+    var targetNoteIdForEditor by remember { mutableStateOf<String?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val navController = rememberNavController()
+
+    LaunchedEffect(pendingNoteIdToOpen) {
+        if (!pendingNoteIdToOpen.isNullOrBlank()) {
+            targetNoteIdForEditor = pendingNoteIdToOpen
+            showNotesSheet = true
+            onClearPendingNoteId()
+        }
+    }
 
     // User Snackbar notification with consolidated Undo action
     LaunchedEffect(state.userMessage) {
@@ -196,6 +217,10 @@ fun LedgerApp(
                 "com.example.ACTION_VIEW_TODAY" -> {
                     selectedTab = 1
                     activeDateForQuickEntry = System.currentTimeMillis()
+                    onClearShortcutAction()
+                }
+                com.example.notes.NoteReminderScheduler.ACTION_OPEN_NOTE -> {
+                    showNotesSheet = true
                     onClearShortcutAction()
                 }
             }
@@ -363,6 +388,7 @@ fun LedgerApp(
                                         state = state,
                                         viewModel = viewModel,
                                         onOpenSettings = { selectedTab = 3 },
+                                        onOpenNotes = { showNotesSheet = true },
                                         onSelectionModeChange = { isRateItemSelectionMode = it },
                                         onCreateInvoiceFromItems = { items ->
                                             preselectedInvoiceItemsForInvoice = emptyList()
@@ -398,6 +424,7 @@ fun LedgerApp(
                                         onTriggerCloudSync = { viewModel.triggerCloudSync() },
                                         onDailyClosingClick = { viewModel.shareDailyClosing(context) },
                                         onOpenSettings = { selectedTab = 3 },
+                                        onOpenNotes = { showNotesSheet = true },
                                         onQuickEntryForCustomer = { custId, txnType ->
                                             preselectedCustomerIdForQuickEntry = custId
                                             quickEntryType = txnType
@@ -625,6 +652,47 @@ fun LedgerApp(
                         onDismiss = { showAddTransactionDialog = false },
                         onConfirm = { custId, amount, type, description, method, invoiceRef, dateTimestamp ->
                             viewModel.addTransaction(custId, amount, type, description, method, invoiceRef, dateTimestamp)
+                        }
+                    )
+                }
+
+                // iOS-style full-screen Notes sheet sliding up from the bottom
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = showNotesSheet,
+                    enter = slideInVertically(
+                        initialOffsetY = { fullHeight -> fullHeight },
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    ) + fadeIn(animationSpec = tween(220)),
+                    exit = slideOutVertically(
+                        targetOffsetY = { fullHeight -> fullHeight },
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    ) + fadeOut(animationSpec = tween(180)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(200f)
+                ) {
+                    NotesSheetScreen(
+                        notes = state.notes,
+                        customLabels = state.customNoteLabels,
+                        customers = state.customers,
+                        initialNoteIdToOpen = targetNoteIdForEditor,
+                        onConsumeInitialNoteId = { targetNoteIdForEditor = null },
+                        onSaveNote = { note -> viewModel.saveNote(note) },
+                        onDeleteNotes = { notesToDelete -> viewModel.deleteNotesPermanently(notesToDelete) },
+                        onRestoreNotes = { notesToRestore -> viewModel.restoreDeletedNotes(notesToRestore) },
+                        onSetNotesPinned = { ids, pinned -> viewModel.setNotesPinned(ids, pinned) },
+                        onSetNotesDone = { ids, done -> viewModel.setNotesDone(ids, done) },
+                        onAddCustomLabel = { labelName -> viewModel.addCustomNoteLabel(labelName) },
+                        onDeleteCustomLabel = { labelName -> viewModel.deleteCustomNoteLabel(labelName) },
+                        onClose = {
+                            targetNoteIdForEditor = null
+                            showNotesSheet = false
                         }
                     )
                 }

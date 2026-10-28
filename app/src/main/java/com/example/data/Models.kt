@@ -443,3 +443,170 @@ data class BusinessSummary(
     val sevenDayTrend: List<DailyTrendPoint> = emptyList()
 )
 
+@Immutable
+data class NoteChecklistItem(
+    val id: String = UUID.randomUUID().toString(),
+    val text: String = "",
+    val isChecked: Boolean = false
+)
+
+@Immutable
+@Entity(
+    tableName = "notes",
+    indices = [
+        Index(value = ["updatedAt"]),
+        Index(value = ["label"]),
+        Index(value = ["isPinned"]),
+        Index(value = ["isDone"]),
+        Index(value = ["linkedCustomerId"])
+    ]
+)
+data class NoteEntity(
+    @PrimaryKey
+    val id: String = UUID.randomUUID().toString(),
+    val text: String = "",
+    val label: String = LABEL_GENERAL,
+    val isChecklist: Boolean = false,
+    val checklistJson: String = "[]",
+    val isPinned: Boolean = false,
+    val isDone: Boolean = false,
+    val linkedCustomerId: String = "",
+    val linkedCustomerName: String = "",
+    val reminderTime: Long = 0L,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = createdAt
+) {
+    @delegate:androidx.room.Ignore
+    val checklistItems: List<NoteChecklistItem> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        decodeChecklist(checklistJson)
+    }
+
+    @delegate:androidx.room.Ignore
+    val completedChecklistCount: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        checklistItems.count { it.isChecked && it.text.isNotBlank() }
+    }
+
+    @delegate:androidx.room.Ignore
+    val totalChecklistCount: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        checklistItems.count { it.text.isNotBlank() }
+    }
+
+    @delegate:androidx.room.Ignore
+    val titleText: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        val firstTextLine = text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+        if (!firstTextLine.isNullOrEmpty()) {
+            firstTextLine
+        } else {
+            val firstChecklist = checklistItems.firstOrNull { it.text.isNotBlank() }?.text?.trim()
+            firstChecklist ?: ""
+        }
+    }
+
+    @delegate:androidx.room.Ignore
+    val previewText: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        val nonEmptyLines = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        if (nonEmptyLines.size > 1) {
+            nonEmptyLines.drop(1).joinToString(" • ").take(140)
+        } else if (isChecklist && checklistItems.isNotEmpty()) {
+            val itemsToJoin = if (nonEmptyLines.isEmpty()) {
+                checklistItems.filter { it.text.isNotBlank() }.drop(1)
+            } else {
+                checklistItems.filter { it.text.isNotBlank() }
+            }
+            itemsToJoin.joinToString(", ") { (if (it.isChecked) "✓ " else "○ ") + it.text.trim() }.take(140)
+        } else {
+            ""
+        }
+    }
+
+    @delegate:androidx.room.Ignore
+    val isEmptyNote: Boolean by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        text.isBlank() && checklistItems.none { it.text.isNotBlank() }
+    }
+
+    @delegate:androidx.room.Ignore
+    val searchTokens: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        val checklistStr = checklistItems.joinToString(" ") { it.text.lowercase() }
+        "${text.lowercase()} $checklistStr ${label.lowercase()} ${linkedCustomerName.lowercase()}"
+    }
+
+    fun toShareablePlainText(): String {
+        val sb = StringBuilder()
+        val trimmedText = text.trim()
+        if (trimmedText.isNotEmpty()) {
+            sb.append(trimmedText)
+        }
+        val activeItems = checklistItems.filter { it.text.isNotBlank() }
+        if (activeItems.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            val unchecked = activeItems.filter { !it.isChecked }
+            val checked = activeItems.filter { it.isChecked }
+            unchecked.forEach { item ->
+                sb.append("☐ ").append(item.text.trim()).append("\n")
+            }
+            if (checked.isNotEmpty()) {
+                if (unchecked.isNotEmpty()) sb.append("\n")
+                checked.forEach { item ->
+                    sb.append("☑ ").append(item.text.trim()).append("\n")
+                }
+            }
+        }
+        if (linkedCustomerName.isNotBlank()) {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("Customer: ").append(linkedCustomerName)
+        }
+        return sb.toString().trim()
+    }
+
+    companion object {
+        const val LABEL_PURCHASE_LIST = "Purchase List"
+        const val LABEL_CUSTOMERS = "Customers"
+        const val LABEL_IMPORTANT_DATES = "Important Dates"
+        const val LABEL_TO_REMEMBER = "To Remember"
+        const val LABEL_GENERAL = "General"
+
+        val DEFAULT_LABELS = listOf(
+            LABEL_PURCHASE_LIST,
+            LABEL_CUSTOMERS,
+            LABEL_IMPORTANT_DATES,
+            LABEL_TO_REMEMBER,
+            LABEL_GENERAL
+        )
+
+        fun encodeChecklist(items: List<NoteChecklistItem>): String {
+            if (items.isEmpty()) return "[]"
+            val arr = org.json.JSONArray()
+            items.forEach { item ->
+                val obj = org.json.JSONObject()
+                obj.put("id", item.id)
+                obj.put("text", item.text)
+                obj.put("isChecked", item.isChecked)
+                arr.put(obj)
+            }
+            return arr.toString()
+        }
+
+        fun decodeChecklist(json: String): List<NoteChecklistItem> {
+            if (json.isBlank() || json == "[]") return emptyList()
+            return try {
+                val arr = org.json.JSONArray(json)
+                val list = ArrayList<NoteChecklistItem>(arr.length())
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    list.add(
+                        NoteChecklistItem(
+                            id = obj.optString("id", UUID.randomUUID().toString()),
+                            text = obj.optString("text", ""),
+                            isChecked = obj.optBoolean("isChecked", false)
+                        )
+                    )
+                }
+                list
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+}
+
+

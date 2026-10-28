@@ -16,9 +16,10 @@ import kotlinx.coroutines.Dispatchers
         InvoiceEntity::class,
         AuditLogEntity::class,
         RateItemEntity::class,
-        PriceHistoryEntity::class
+        PriceHistoryEntity::class,
+        NoteEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class LedgerDatabase : RoomDatabase() {
@@ -28,6 +29,39 @@ abstract class LedgerDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var INSTANCE: LedgerDatabase? = null
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS `notes` (
+                            `id` TEXT NOT NULL,
+                            `text` TEXT NOT NULL DEFAULT '',
+                            `label` TEXT NOT NULL DEFAULT 'General',
+                            `isChecklist` INTEGER NOT NULL DEFAULT 0,
+                            `checklistJson` TEXT NOT NULL DEFAULT '[]',
+                            `isPinned` INTEGER NOT NULL DEFAULT 0,
+                            `isDone` INTEGER NOT NULL DEFAULT 0,
+                            `linkedCustomerId` TEXT NOT NULL DEFAULT '',
+                            `linkedCustomerName` TEXT NOT NULL DEFAULT '',
+                            `reminderTime` INTEGER NOT NULL DEFAULT 0,
+                            `createdAt` INTEGER NOT NULL DEFAULT 0,
+                            `updatedAt` INTEGER NOT NULL DEFAULT 0,
+                            PRIMARY KEY(`id`)
+                        )
+                        """.trimIndent()
+                    )
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_updatedAt` ON `notes` (`updatedAt`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_label` ON `notes` (`label`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_isPinned` ON `notes` (`isPinned`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_isDone` ON `notes` (`isDone`)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_linkedCustomerId` ON `notes` (`linkedCustomerId`)")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
 
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -97,7 +131,7 @@ abstract class LedgerDatabase : RoomDatabase() {
                     LedgerDatabase::class.java,
                     "ledgermate_database"
                 )
-                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                    .addMigrations(MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance

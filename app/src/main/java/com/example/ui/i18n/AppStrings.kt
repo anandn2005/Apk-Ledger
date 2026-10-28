@@ -634,4 +634,387 @@ object AppStrings {
         AppLanguage.RUSSIAN -> "Нажмите на иконку для смены, перетащите (≡) для сортировки."
         else -> "Tap icon to change vector, drag (≡) to reorder, or edit names."
     }
+
+    // --- PINNED ITEMS SECTION ---
+    fun pinned(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पिन किए गए"
+        AppLanguage.SPANISH -> "Fijados"
+        AppLanguage.CHINESE -> "已置顶"
+        AppLanguage.RUSSIAN -> "Закрепленные"
+        else -> "Pinned"
+    }
+
+    fun pin(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पिन करें"
+        AppLanguage.SPANISH -> "Fijar"
+        AppLanguage.CHINESE -> "置顶"
+        AppLanguage.RUSSIAN -> "Закрепить"
+        else -> "Pin"
+    }
+
+    fun unpin(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "अनपिन करें"
+        AppLanguage.SPANISH -> "Desfijar"
+        AppLanguage.CHINESE -> "取消置顶"
+        AppLanguage.RUSSIAN -> "Открепить"
+        else -> "Unpin"
+    }
+
+    fun reorder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "क्रम बदलें"
+        AppLanguage.SPANISH -> "Reordenar"
+        AppLanguage.CHINESE -> "调整顺序"
+        AppLanguage.RUSSIAN -> "Изменить порядок"
+        else -> "Reorder"
+    }
+
+    fun unpinAll(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "सभी अनपिन करें"
+        AppLanguage.SPANISH -> "Desfijar todo"
+        AppLanguage.CHINESE -> "全部取消置顶"
+        AppLanguage.RUSSIAN -> "Открепить все"
+        else -> "Unpin all"
+    }
+
+    fun collapse(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "संक्षिप्त करें"
+        AppLanguage.SPANISH -> "Contraer"
+        AppLanguage.CHINESE -> "收起"
+        AppLanguage.RUSSIAN -> "Свернуть"
+        else -> "Collapse"
+    }
+
+    fun expand(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "विस्तार करें"
+        AppLanguage.SPANISH -> "Expandir"
+        AppLanguage.CHINESE -> "展开"
+        AppLanguage.RUSSIAN -> "Развернуть"
+        else -> "Expand"
+    }
+
+    fun showMore(lang: AppLanguage, hiddenCount: Int = 0): String = when (lang) {
+        AppLanguage.HINDI -> if (hiddenCount > 0) "और दिखाएं ($hiddenCount)" else "और दिखाएं"
+        AppLanguage.SPANISH -> if (hiddenCount > 0) "Mostrar más ($hiddenCount)" else "Mostrar más"
+        AppLanguage.CHINESE -> if (hiddenCount > 0) "显示更多 ($hiddenCount)" else "显示更多"
+        AppLanguage.RUSSIAN -> if (hiddenCount > 0) "Показать ещё ($hiddenCount)" else "Показать ещё"
+        else -> if (hiddenCount > 0) "Show more ($hiddenCount)" else "Show more"
+    }
+
+    fun showLess(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "कम दिखाएं"
+        AppLanguage.SPANISH -> "Mostrar menos"
+        AppLanguage.CHINESE -> "收起部分"
+        AppLanguage.RUSSIAN -> "Показать меньше"
+        else -> "Show less"
+    }
+
+    fun undo(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पूर्ववत करें"
+        AppLanguage.SPANISH -> "Deshacer"
+        AppLanguage.CHINESE -> "撤销"
+        AppLanguage.RUSSIAN -> "Отменить"
+        else -> "Undo"
+    }
+
+    fun itemsPinnedMessage(count: Int, lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "$count आइटम पिन किए गए"
+        AppLanguage.SPANISH -> if (count == 1) "1 artículo fijado" else "$count artículos fijados"
+        AppLanguage.CHINESE -> "已置顶 $count 项商品"
+        AppLanguage.RUSSIAN -> "$count закрепл."
+        else -> if (count == 1) "1 item pinned" else "$count items pinned"
+    }
+
+    fun itemsUnpinnedMessage(count: Int, lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "$count आइटम अनपिन किए गए"
+        AppLanguage.SPANISH -> if (count == 1) "1 artículo desfijado" else "$count artículos desfijados"
+        AppLanguage.CHINESE -> "已取消置顶 $count 项商品"
+        AppLanguage.RUSSIAN -> "$count открепл."
+        else -> if (count == 1) "1 item unpinned" else "$count items unpinned"
+    }
+
+    // --- NOTES FEATURE ---
+    fun notes(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "नोट्स"
+        AppLanguage.SPANISH -> "Notas"
+        AppLanguage.CHINESE -> "备忘录"
+        AppLanguage.RUSSIAN -> "Заметки"
+        else -> "Notes"
+    }
+
+    fun newNote(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "नया नोट"
+        AppLanguage.SPANISH -> "Nueva nota"
+        AppLanguage.CHINESE -> "新建备忘录"
+        AppLanguage.RUSSIAN -> "Новая заметка"
+        else -> "New note"
+    }
+
+    fun searchNotes(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "नोट्स और सूचियां खोजें..."
+        AppLanguage.SPANISH -> "Buscar en notas..."
+        AppLanguage.CHINESE -> "搜索标题或内容..."
+        AppLanguage.RUSSIAN -> "Поиск заметок..."
+        else -> "Search notes..."
+    }
+
+    fun labelPurchaseList(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "खरीद सूची"
+        AppLanguage.SPANISH -> "Lista de compras"
+        AppLanguage.CHINESE -> "采购清单"
+        AppLanguage.RUSSIAN -> "Список покупок"
+        else -> "Purchase List"
+    }
+
+    fun labelCustomers(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "ग्राहक"
+        AppLanguage.SPANISH -> "Clientes"
+        AppLanguage.CHINESE -> "客户"
+        AppLanguage.RUSSIAN -> "Клиенты"
+        else -> "Customers"
+    }
+
+    fun labelImportantDates(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "महत्वपूर्ण तिथियां"
+        AppLanguage.SPANISH -> "Fechas importantes"
+        AppLanguage.CHINESE -> "重要日期"
+        AppLanguage.RUSSIAN -> "Важные даты"
+        else -> "Important Dates"
+    }
+
+    fun labelToRemember(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "याद रखने योग्य"
+        AppLanguage.SPANISH -> "Para recordar"
+        AppLanguage.CHINESE -> "待记事项"
+        AppLanguage.RUSSIAN -> "На память"
+        else -> "To Remember"
+    }
+
+    fun labelGeneral(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "सामान्य"
+        AppLanguage.SPANISH -> "General"
+        AppLanguage.CHINESE -> "常规"
+        AppLanguage.RUSSIAN -> "Общее"
+        else -> "General"
+    }
+
+    fun translateNoteLabel(rawLabel: String, lang: AppLanguage): String = when (rawLabel) {
+        "ALL" -> all(lang)
+        "DONE" -> done(lang)
+        "Purchase List" -> labelPurchaseList(lang)
+        "Customers" -> labelCustomers(lang)
+        "Important Dates" -> labelImportantDates(lang)
+        "To Remember" -> labelToRemember(lang)
+        "General" -> labelGeneral(lang)
+        else -> rawLabel
+    }
+
+    fun previous7Days(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पिछले 7 दिन"
+        AppLanguage.SPANISH -> "Últimos 7 días"
+        AppLanguage.CHINESE -> "过去 7 天"
+        AppLanguage.RUSSIAN -> "Предыдущие 7 дней"
+        else -> "Previous 7 Days"
+    }
+
+    fun notesEmptyTitle(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "अभी कोई नोट नहीं है"
+        AppLanguage.SPANISH -> "Aún no hay notas"
+        AppLanguage.CHINESE -> "暂无备忘录"
+        AppLanguage.RUSSIAN -> "Заметок пока нет"
+        else -> "No notes yet"
+    }
+
+    fun notesEmptySubtitle(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "खरीद सूची, ग्राहक नोट्स या महत्वपूर्ण तारीखें लिखने के लिए नीचे टैप करें।"
+        AppLanguage.SPANISH -> "Guarde listas de compras, notas de clientes o fechas importantes."
+        AppLanguage.CHINESE -> "随时记录采购清单、客户备注或重要日期。"
+        AppLanguage.RUSSIAN -> "Записывайте списки покупок, заметки о клиентах и важные даты."
+        else -> "Keep purchase lists, customer notes, important dates, and things to remember."
+    }
+
+    fun editedPrefix(dateStr: String, lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "संपादित $dateStr"
+        AppLanguage.SPANISH -> "Editado $dateStr"
+        AppLanguage.CHINESE -> "编辑于 $dateStr"
+        AppLanguage.RUSSIAN -> "Изменено $dateStr"
+        else -> "Edited $dateStr"
+    }
+
+    fun checklistProgressText(doneCount: Int, totalCount: Int, lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "$totalCount में से $doneCount पूर्ण"
+        AppLanguage.SPANISH -> "$doneCount de $totalCount completados"
+        AppLanguage.CHINESE -> "已完成 $doneCount / $totalCount"
+        AppLanguage.RUSSIAN -> "$doneCount из $totalCount выполнено"
+        else -> "$doneCount of $totalCount done"
+    }
+
+    fun completedHeading(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पूर्ण किए गए"
+        AppLanguage.SPANISH -> "Completados"
+        AppLanguage.CHINESE -> "已完成"
+        AppLanguage.RUSSIAN -> "Завершенные"
+        else -> "Completed"
+    }
+
+    fun addChecklistItem(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "आइटम जोड़ें..."
+        AppLanguage.SPANISH -> "Añadir elemento..."
+        AppLanguage.CHINESE -> "添加项目..."
+        AppLanguage.RUSSIAN -> "Добавить пункт..."
+        else -> "Add item..."
+    }
+
+    fun noteTitlePlaceholder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "शीर्षक"
+        AppLanguage.SPANISH -> "Título"
+        AppLanguage.CHINESE -> "标题"
+        AppLanguage.RUSSIAN -> "Заголовок"
+        else -> "Title"
+    }
+
+    fun noteBodyPlaceholder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "नोट लिखना शुरू करें..."
+        AppLanguage.SPANISH -> "Empiece a escribir..."
+        AppLanguage.CHINESE -> "开始输入内容..."
+        AppLanguage.RUSSIAN -> "Начните вводить текст..."
+        else -> "Start typing..."
+    }
+
+    fun checklist(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "सूची"
+        AppLanguage.SPANISH -> "Lista"
+        AppLanguage.CHINESE -> "清单"
+        AppLanguage.RUSSIAN -> "Список"
+        else -> "Checklist"
+    }
+
+    fun label(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "लेबल"
+        AppLanguage.SPANISH -> "Etiqueta"
+        AppLanguage.CHINESE -> "标签"
+        AppLanguage.RUSSIAN -> "Метка"
+        else -> "Label"
+    }
+
+    fun customer(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "ग्राहक"
+        AppLanguage.SPANISH -> "Cliente"
+        AppLanguage.CHINESE -> "客户"
+        AppLanguage.RUSSIAN -> "Клиент"
+        else -> "Customer"
+    }
+
+    fun reminder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "रिमाइंडर"
+        AppLanguage.SPANISH -> "Recordatorio"
+        AppLanguage.CHINESE -> "提醒"
+        AppLanguage.RUSSIAN -> "Напоминание"
+        else -> "Reminder"
+    }
+
+    fun share(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "साझा करें"
+        AppLanguage.SPANISH -> "Compartir"
+        AppLanguage.CHINESE -> "分享"
+        AppLanguage.RUSSIAN -> "Поделиться"
+        else -> "Share"
+    }
+
+    fun copyText(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "कॉपी करें"
+        AppLanguage.SPANISH -> "Copiar"
+        AppLanguage.CHINESE -> "复制"
+        AppLanguage.RUSSIAN -> "Копировать"
+        else -> "Copy"
+    }
+
+    fun copiedToClipboard(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "क्लिपबोर्ड पर कॉपी किया गया"
+        AppLanguage.SPANISH -> "Copiado al portapapeles"
+        AppLanguage.CHINESE -> "已复制到剪贴板"
+        AppLanguage.RUSSIAN -> "Скопировано в буфер обмена"
+        else -> "Copied to clipboard"
+    }
+
+    fun markAsDone(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "पूर्ण चिह्नित करें"
+        AppLanguage.SPANISH -> "Marcar como hecho"
+        AppLanguage.CHINESE -> "标记为完成"
+        AppLanguage.RUSSIAN -> "Отметить выполненным"
+        else -> "Mark as done"
+    }
+
+    fun notesDeletedMessage(count: Int, lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> if (count == 1) "नोट हटाया गया" else "$count नोट्स हटाए गए"
+        AppLanguage.SPANISH -> if (count == 1) "Nota eliminada" else "$count notas eliminadas"
+        AppLanguage.CHINESE -> "已删除 $count 条备忘录"
+        AppLanguage.RUSSIAN -> if (count == 1) "Заметка удалена" else "Удалено заметок: $count"
+        else -> if (count == 1) "Note deleted" else "$count notes deleted"
+    }
+
+    fun newLabel(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "नया लेबल"
+        AppLanguage.SPANISH -> "Nueva etiqueta"
+        AppLanguage.CHINESE -> "新建标签"
+        AppLanguage.RUSSIAN -> "Новая метка"
+        else -> "New label"
+    }
+
+    fun linkCustomer(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "ग्राहक जोड़ें"
+        AppLanguage.SPANISH -> "Vincular cliente"
+        AppLanguage.CHINESE -> "关联客户"
+        AppLanguage.RUSSIAN -> "Привязать клиента"
+        else -> "Link Customer"
+    }
+
+    fun unlinkCustomer(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "ग्राहक हटाएं"
+        AppLanguage.SPANISH -> "Desvincular cliente"
+        AppLanguage.CHINESE -> "取消关联客户"
+        AppLanguage.RUSSIAN -> "Отвязать клиента"
+        else -> "Unlink Customer"
+    }
+
+    fun setReminder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "रिमाइंडर सेट करें"
+        AppLanguage.SPANISH -> "Configurar recordatorio"
+        AppLanguage.CHINESE -> "设置提醒"
+        AppLanguage.RUSSIAN -> "Установить напоминание"
+        else -> "Set Reminder"
+    }
+
+    fun clearReminder(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "रिमाइंडर हटाएं"
+        AppLanguage.SPANISH -> "Borrar recordatorio"
+        AppLanguage.CHINESE -> "清除提醒"
+        AppLanguage.RUSSIAN -> "Удалить напоминание"
+        else -> "Clear Reminder"
+    }
+
+    fun dateLabel(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "तारीख (DD/MM/YYYY)"
+        AppLanguage.SPANISH -> "Fecha (DD/MM/YYYY)"
+        AppLanguage.CHINESE -> "日期 (DD/MM/YYYY)"
+        AppLanguage.RUSSIAN -> "Дата (ДД/ММ/ГГГГ)"
+        else -> "Date (DD/MM/YYYY)"
+    }
+
+    fun timeLabel(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "समय"
+        AppLanguage.SPANISH -> "Hora"
+        AppLanguage.CHINESE -> "时间"
+        AppLanguage.RUSSIAN -> "Время"
+        else -> "Time"
+    }
+
+    fun untitledNote(lang: AppLanguage): String = when (lang) {
+        AppLanguage.HINDI -> "बिना शीर्षक नोट"
+        AppLanguage.SPANISH -> "Nota sin título"
+        AppLanguage.CHINESE -> "无标题备忘录"
+        AppLanguage.RUSSIAN -> "Без названия"
+        else -> "Untitled Note"
+    }
 }
+
+

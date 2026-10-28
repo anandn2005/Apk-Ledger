@@ -19,6 +19,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -168,6 +169,12 @@ fun encodePriceHistory(list: List<PricePoint>): String {
     }
 }
 
+private data class PinUndoBannerState(
+    val message: String,
+    val previousPinnedIds: List<String>,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ItemRateListScreen(
@@ -175,6 +182,7 @@ fun ItemRateListScreen(
     viewModel: LedgerViewModel,
     modifier: Modifier = Modifier,
     onOpenSettings: () -> Unit = {},
+    onOpenNotes: () -> Unit = {},
     onSelectionModeChange: (Boolean) -> Unit = {},
     onCreateInvoiceFromItems: (List<com.example.data.RateItemEntity>) -> Unit = {},
     onCreateInvoiceWithCartItems: (List<com.example.data.InvoiceItem>) -> Unit = {}
@@ -207,6 +215,55 @@ fun ItemRateListScreen(
     val coroutineScope = rememberCoroutineScope()
     val categoryRowState = rememberLazyListState()
     var isCategoryPillsVisible by rememberSaveable { mutableStateOf(false) }
+
+    val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
+
+    // Pinned section states
+    val pinnedOrderList = state.pinnedRateItemIds
+    val pinnedSet = remember(pinnedOrderList) { pinnedOrderList.toSet() }
+    val isPinnedSectionCollapsed = state.isPinnedItemsCollapsed
+    var isPinnedShowAllExpanded by rememberSaveable { mutableStateOf(false) }
+    var isPinnedReorderMode by rememberSaveable { mutableStateOf(false) }
+    var showPinnedHeaderMenu by remember { mutableStateOf(false) }
+    var pinUndoBanner by remember { mutableStateOf<PinUndoBannerState?>(null) }
+
+    LaunchedEffect(pinUndoBanner?.timestamp) {
+        if (pinUndoBanner != null) {
+            delay(4500)
+            pinUndoBanner = null
+        }
+    }
+
+    LaunchedEffect(pinnedOrderList.isEmpty()) {
+        if (pinnedOrderList.isEmpty()) {
+            isPinnedReorderMode = false
+        }
+    }
+
+    val triggerPinWithUndo: (idsToPin: Collection<String>) -> Unit = { idsToPin ->
+        val beforeIds = state.pinnedRateItemIds
+        val newlyPinnedCount = idsToPin.count { it !in pinnedSet }.coerceAtLeast(idsToPin.size)
+        AppHaptics.performTap(view)
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        viewModel.pinRateItems(idsToPin)
+        pinUndoBanner = PinUndoBannerState(
+            message = AppStrings.itemsPinnedMessage(newlyPinnedCount, state.selectedLanguage),
+            previousPinnedIds = beforeIds
+        )
+    }
+
+    val triggerUnpinWithUndo: (idsToUnpin: Collection<String>) -> Unit = { idsToUnpin ->
+        val beforeIds = state.pinnedRateItemIds
+        val unpinnedCount = idsToUnpin.count { it in pinnedSet }.coerceAtLeast(idsToUnpin.size)
+        AppHaptics.performTap(view)
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        viewModel.unpinRateItems(idsToUnpin)
+        pinUndoBanner = PinUndoBannerState(
+            message = AppStrings.itemsUnpinnedMessage(unpinnedCount, state.selectedLanguage),
+            previousPinnedIds = beforeIds
+        )
+    }
 
     val isHeaderVisible = true
 
@@ -276,8 +333,63 @@ fun ItemRateListScreen(
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
+                                // Pin / Unpin button in Select Mode Header
+                                // If any selected item is not pinned -> Pin all selected items
+                                // If all selected items are already pinned -> Unpin all selected items
+                                val anySelectedUnpinned = selectedItemIds.any { it !in pinnedSet }
+                                val pinActionLabel = if (anySelectedUnpinned) {
+                                    AppStrings.pin(state.selectedLanguage)
+                                } else {
+                                    AppStrings.unpin(state.selectedLanguage)
+                                }
+                                Surface(
+                                    onClick = {
+                                        val ids = selectedItemIds.toList()
+                                        if (anySelectedUnpinned) {
+                                            triggerPinWithUndo(ids)
+                                        } else {
+                                            triggerUnpinWithUndo(ids)
+                                        }
+                                        selectedItemIds = emptySet()
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (anySelectedUnpinned) {
+                                        StatusEmerald.copy(alpha = 0.14f)
+                                    } else {
+                                        if (isAppInDarkTheme()) Color(0xFF2C2C2E) else Color(0xFFF2F2F7)
+                                    },
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (anySelectedUnpinned) StatusEmerald.copy(alpha = 0.4f) else Color.Transparent
+                                    ),
+                                    modifier = Modifier
+                                        .height(34.dp)
+                                        .testTag("select_mode_pin_button")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PushPin,
+                                            contentDescription = pinActionLabel,
+                                            tint = if (anySelectedUnpinned) StatusEmerald else Color(0xFF8E8E93),
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .graphicsLayer { rotationZ = if (anySelectedUnpinned) 35f else 0f }
+                                        )
+                                        Text(
+                                            text = pinActionLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (anySelectedUnpinned) StatusEmerald else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+
                                 val allSelected = selectedItemIds.size == state.rateItems.size && state.rateItems.isNotEmpty()
                                 // Minimalist toggle icon button with SF outline style
                                 IconButton(
@@ -358,6 +470,10 @@ fun ItemRateListScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
+                                    NotesHeaderIconButton(
+                                        hasDueReminder = state.hasDueOrOverdueNoteReminder,
+                                        onClick = onOpenNotes
+                                    )
                                     CloudSyncStatusBadge(
                                         syncState = state.syncState,
                                         authUser = state.authUser,
@@ -796,6 +912,17 @@ fun ItemRateListScreen(
                         }
                     }
 
+                    val itemById = remember(state.rateItems) {
+                        state.rateItems.associateBy { it.id }
+                    }
+                    val pinnedMatchingItems = remember(state.rateItems, pinnedOrderList) {
+                        pinnedOrderList.mapNotNull { itemById[it] }
+                    }
+                    val unpinnedMatchingItems = remember(state.rateItems, pinnedSet) {
+                        state.rateItems.filter { it.id !in pinnedSet }
+                    }
+                    val isDarkThemeActive = isAppInDarkTheme()
+
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(top = 0.dp, bottom = 145.dp),
@@ -804,8 +931,350 @@ fun ItemRateListScreen(
                             .fillMaxSize()
                             .nestedScroll(pullToRevealConnection)
                     ) {
+                        // iOS Messages-Style Pinned Section at the very top of the list
+                        if (pinnedMatchingItems.isNotEmpty()) {
+                            item(
+                                key = "pinned_items_section_card",
+                                contentType = "pinned_section"
+                            ) {
+                                val cardBgColor = if (isDarkThemeActive) Color(0xFF10281E) else Color(0xFFEAF7EE)
+                                val cardBorderColor = if (isDarkThemeActive) Color(0xFF1F4D38) else Color(0xFFB7E4C7)
+                                val headerAccentColor = if (isDarkThemeActive) Color(0xFF34D399) else Color(0xFF15803D)
+                                val visiblePinnedItems = remember(
+                                    pinnedMatchingItems,
+                                    isPinnedSectionCollapsed,
+                                    isPinnedShowAllExpanded,
+                                    isPinnedReorderMode
+                                ) {
+                                    when {
+                                        isPinnedSectionCollapsed && !isPinnedReorderMode -> emptyList()
+                                        isPinnedShowAllExpanded || isPinnedReorderMode || pinnedMatchingItems.size <= 6 -> pinnedMatchingItems
+                                        else -> pinnedMatchingItems.take(6)
+                                    }
+                                }
+                                val hiddenPinnedCount = (pinnedMatchingItems.size - 6).coerceAtLeast(0)
+
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = cardBgColor,
+                                    border = BorderStroke(1.dp, cardBorderColor),
+                                    shadowElevation = if (isDarkThemeActive) 2.dp else 1.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .animateItem(
+                                            fadeInSpec = tween(220),
+                                            placementSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
+                                            fadeOutSpec = tween(180)
+                                        )
+                                        .animateContentSize(
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMediumLow
+                                            )
+                                        )
+                                        .testTag("pinned_items_section_card")
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        // Pinned Section Small Header: Pin icon, "Pinned", count, and 3-option menu
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = if (isPinnedSectionCollapsed && !isPinnedReorderMode) 8.dp else 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.clickable {
+                                                    if (!isPinnedReorderMode) {
+                                                        AppHaptics.performTap(view)
+                                                        viewModel.setPinnedItemsCollapsed(!isPinnedSectionCollapsed)
+                                                    }
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PushPin,
+                                                    contentDescription = null,
+                                                    tint = headerAccentColor,
+                                                    modifier = Modifier
+                                                        .size(15.dp)
+                                                        .graphicsLayer { rotationZ = 35f }
+                                                )
+                                                Text(
+                                                    text = AppStrings.pinned(state.selectedLanguage),
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = headerAccentColor
+                                                )
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = headerAccentColor.copy(alpha = if (isDarkThemeActive) 0.22f else 0.14f)
+                                                ) {
+                                                    Text(
+                                                        text = "${pinnedMatchingItems.size}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = headerAccentColor,
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                if (isPinnedReorderMode) {
+                                                    Surface(
+                                                        onClick = {
+                                                            AppHaptics.performTap(view)
+                                                            isPinnedReorderMode = false
+                                                        },
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        color = StatusEmerald,
+                                                        modifier = Modifier.testTag("pinned_reorder_done_button")
+                                                    ) {
+                                                        Text(
+                                                            text = AppStrings.done(state.selectedLanguage),
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color.White,
+                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Box {
+                                                    IconButton(
+                                                        onClick = {
+                                                            AppHaptics.performTap(view)
+                                                            showPinnedHeaderMenu = true
+                                                        },
+                                                        modifier = Modifier
+                                                            .size(32.dp)
+                                                            .testTag("pinned_section_menu_button")
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.MoreHoriz,
+                                                            contentDescription = "Pinned section options",
+                                                            tint = headerAccentColor,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+
+                                                    DropdownMenu(
+                                                        expanded = showPinnedHeaderMenu,
+                                                        onDismissRequest = { showPinnedHeaderMenu = false }
+                                                    ) {
+                                                        // Option 1: Reorder
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = if (isPinnedReorderMode) AppStrings.done(state.selectedLanguage) else AppStrings.reorder(state.selectedLanguage),
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            },
+                                                            leadingIcon = {
+                                                                Icon(
+                                                                    imageVector = if (isPinnedReorderMode) Icons.Default.Check else Icons.Default.DragHandle,
+                                                                    contentDescription = null
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                showPinnedHeaderMenu = false
+                                                                AppHaptics.performTap(view)
+                                                                if (!isPinnedReorderMode && isPinnedSectionCollapsed) {
+                                                                    viewModel.setPinnedItemsCollapsed(false)
+                                                                }
+                                                                isPinnedReorderMode = !isPinnedReorderMode
+                                                            }
+                                                        )
+                                                        // Option 2: Unpin all
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = AppStrings.unpinAll(state.selectedLanguage),
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            },
+                                                            leadingIcon = {
+                                                                Icon(
+                                                                    imageVector = Icons.Outlined.PushPin,
+                                                                    contentDescription = null
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                showPinnedHeaderMenu = false
+                                                                isPinnedReorderMode = false
+                                                                val allIds = state.pinnedRateItemIds
+                                                                if (allIds.isNotEmpty()) {
+                                                                    triggerUnpinWithUndo(allIds)
+                                                                }
+                                                            }
+                                                        )
+                                                        // Option 3: Collapse / Expand
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Text(
+                                                                    text = if (isPinnedSectionCollapsed) AppStrings.expand(state.selectedLanguage) else AppStrings.collapse(state.selectedLanguage),
+                                                                    fontWeight = FontWeight.Medium
+                                                                )
+                                                            },
+                                                            leadingIcon = {
+                                                                Icon(
+                                                                    imageVector = if (isPinnedSectionCollapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                                                                    contentDescription = null
+                                                                )
+                                                            },
+                                                            onClick = {
+                                                                showPinnedHeaderMenu = false
+                                                                AppHaptics.performTap(view)
+                                                                if (!isPinnedSectionCollapsed) {
+                                                                    isPinnedReorderMode = false
+                                                                }
+                                                                viewModel.setPinnedItemsCollapsed(!isPinnedSectionCollapsed)
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Pinned Items List inside the rounded light green card
+                                        AnimatedVisibility(
+                                            visible = !isPinnedSectionCollapsed || isPinnedReorderMode,
+                                            enter = expandVertically(
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            ) + fadeIn(tween(180)),
+                                            exit = shrinkVertically(
+                                                animationSpec = spring(
+                                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            ) + fadeOut(tween(150))
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(bottom = 6.dp)
+                                            ) {
+                                                visiblePinnedItems.forEachIndexed { pIndex, item ->
+                                                    key(item.id) {
+                                                        val isSelected = selectedItemIds.contains(item.id)
+                                                        val itemCartQty = cartSnapshot.quantities[item.id]?.quantity ?: 0.0
+                                                        val isLastVisible = pIndex == visiblePinnedItems.lastIndex && (hiddenPinnedCount == 0 || isPinnedReorderMode)
+                                                        RateItemCard(
+                                                            item = item,
+                                                            rowIndex = pIndex,
+                                                            currencySymbol = state.currencySymbol,
+                                                            isSelected = isSelected,
+                                                            isSelectionMode = isSelectionMode,
+                                                            isCompactView = isCompactView,
+                                                            isCounterMode = isCounterMode || cartSnapshot.quantities.isNotEmpty(),
+                                                            cartQuantity = itemCartQty,
+                                                            variantCartSnapshot = if (item.variants.isNotEmpty()) cartSnapshot else VariantCartSnapshot.Empty,
+                                                            onAdjustCartQty = onAdjustCartQtyStable,
+                                                            isPinned = true,
+                                                            isInPinnedSection = true,
+                                                            isReorderMode = isPinnedReorderMode,
+                                                            showBottomDivider = !isLastVisible,
+                                                            onTogglePin = {
+                                                                triggerUnpinWithUndo(listOf(item.id))
+                                                            },
+                                                            onMoveReorder = { delta ->
+                                                                val fullOrder = state.pinnedRateItemIds.toMutableList()
+                                                                val currentFullIdx = fullOrder.indexOf(item.id)
+                                                                if (currentFullIdx != -1) {
+                                                                    // Find target item in visiblePinnedItems so filtered reorder works naturally too
+                                                                    val targetVisibleIdx = (pIndex + delta).coerceIn(0, visiblePinnedItems.lastIndex)
+                                                                    if (targetVisibleIdx != pIndex) {
+                                                                        val targetItemId = visiblePinnedItems[targetVisibleIdx].id
+                                                                        val targetFullIdx = fullOrder.indexOf(targetItemId)
+                                                                        if (targetFullIdx != -1) {
+                                                                            val moved = fullOrder.removeAt(currentFullIdx)
+                                                                            fullOrder.add(targetFullIdx, moved)
+                                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                            viewModel.setPinnedRateItemsOrder(fullOrder)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            },
+                                                            onToggleSelect = {
+                                                                selectedItemIds = if (isSelected) {
+                                                                    selectedItemIds - item.id
+                                                                } else {
+                                                                    selectedItemIds + item.id
+                                                                }
+                                                            },
+                                                            onLongClick = {
+                                                                if (!isSelectionMode && !isPinnedReorderMode) {
+                                                                    selectedItemIds = setOf(item.id)
+                                                                }
+                                                            },
+                                                            onEdit = {
+                                                                itemToEdit = item
+                                                                showAddEditSheet = true
+                                                            },
+                                                            onDelete = {
+                                                                viewModel.deleteRateItem(item)
+                                                            },
+                                                            onViewHistory = { targetVariantId ->
+                                                                historyItem = item
+                                                                selectedVariantIdForHistory = targetVariantId
+                                                            },
+                                                            onUpdateRateClick = { itemForRateUpdate = item }
+                                                        )
+                                                    }
+                                                }
+
+                                                // Show more / Show less footer when >6 pinned items exist
+                                                if (hiddenPinnedCount > 0 && !isPinnedReorderMode) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clickable {
+                                                                AppHaptics.performTap(view)
+                                                                isPinnedShowAllExpanded = !isPinnedShowAllExpanded
+                                                            }
+                                                            .padding(top = 6.dp, bottom = 2.dp)
+                                                            .testTag("pinned_show_more_button"),
+                                                        horizontalArrangement = Arrangement.Center,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = if (isPinnedShowAllExpanded) {
+                                                                AppStrings.showLess(state.selectedLanguage)
+                                                            } else {
+                                                                AppStrings.showMore(state.selectedLanguage, hiddenPinnedCount)
+                                                            },
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = headerAccentColor
+                                                        )
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Icon(
+                                                            imageVector = if (isPinnedShowAllExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                            contentDescription = null,
+                                                            tint = headerAccentColor,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Normal Unpinned Items (pinned items only appear in Pinned section while pinned)
                         itemsIndexed(
-                            items = state.rateItems,
+                            items = unpinnedMatchingItems,
                             key = { _, item -> item.id }, // NEVER use list index
                             contentType = { _, item -> if (item.variants.isNotEmpty()) "variant" else "single" }
                         ) { index, item ->
@@ -822,6 +1291,12 @@ fun ItemRateListScreen(
                                 cartQuantity = itemCartQty,
                                 variantCartSnapshot = if (item.variants.isNotEmpty()) cartSnapshot else VariantCartSnapshot.Empty,
                                 onAdjustCartQty = onAdjustCartQtyStable,
+                                isPinned = false,
+                                isInPinnedSection = false,
+                                isReorderMode = false,
+                                onTogglePin = {
+                                    triggerPinWithUndo(listOf(item.id))
+                                },
                                 onToggleSelect = {
                                     selectedItemIds = if (isSelected) {
                                         selectedItemIds - item.id
@@ -845,7 +1320,12 @@ fun ItemRateListScreen(
                                     historyItem = item
                                     selectedVariantIdForHistory = targetVariantId
                                 },
-                                onUpdateRateClick = { itemForRateUpdate = item }
+                                onUpdateRateClick = { itemForRateUpdate = item },
+                                modifier = Modifier.animateItem(
+                                    fadeInSpec = tween(220),
+                                    placementSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
+                                    fadeOutSpec = tween(180)
+                                )
                             )
                         }
                     }
@@ -1010,6 +1490,80 @@ fun ItemRateListScreen(
                                             text = "Make Receipt",
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 13.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Pin / Unpin Bottom Message with Undo Button
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = pinUndoBanner != null,
+                        enter = slideInVertically(
+                            initialOffsetY = { it / 2 },
+                            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium)
+                        ) + fadeIn(tween(180)),
+                        exit = slideOutVertically(
+                            targetOffsetY = { it / 2 },
+                            animationSpec = tween(160)
+                        ) + fadeOut(tween(150)),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .zIndex(110f)
+                            .navigationBarsPadding()
+                            .padding(
+                                start = 16.dp,
+                                end = 16.dp,
+                                bottom = if (hasActiveCart) 84.dp else 18.dp
+                            )
+                    ) {
+                        val currentBanner = pinUndoBanner
+                        if (currentBanner != null) {
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = if (isAppInDarkTheme()) Color(0xFF1F2937) else Color(0xFF1C1C1E),
+                                shadowElevation = 6.dp,
+                                modifier = Modifier
+                                    .widthIn(min = 220.dp, max = 380.dp)
+                                    .testTag("pin_undo_snackbar")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PushPin,
+                                        contentDescription = null,
+                                        tint = Color(0xFF34D399),
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .graphicsLayer { rotationZ = 35f }
+                                    )
+                                    Text(
+                                        text = currentBanner.message,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color.White,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            AppHaptics.performTap(view)
+                                            viewModel.setPinnedRateItemsOrder(currentBanner.previousPinnedIds)
+                                            pinUndoBanner = null
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier
+                                            .height(30.dp)
+                                            .testTag("pin_undo_button")
+                                    ) {
+                                        Text(
+                                            text = AppStrings.undo(state.selectedLanguage),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF34D399)
                                         )
                                     }
                                 }
@@ -1182,12 +1736,22 @@ fun ItemRateListScreen(
         )
     }
 
-    // Price History Modal Sheet
+    // Price History Modal Sheet (Item Detail Popup)
     if (historyItem != null) {
+        val currentHistoryItem = historyItem!!
+        val isHistoryItemPinned = pinnedSet.contains(currentHistoryItem.id)
         PriceHistorySheet(
-            item = historyItem!!,
+            item = currentHistoryItem,
             initialVariantId = selectedVariantIdForHistory,
             currencySymbol = state.currencySymbol,
+            isPinned = isHistoryItemPinned,
+            onTogglePin = {
+                if (isHistoryItemPinned) {
+                    triggerUnpinWithUndo(listOf(currentHistoryItem.id))
+                } else {
+                    triggerPinWithUndo(listOf(currentHistoryItem.id))
+                }
+            },
             onDismiss = {
                 historyItem = null
                 selectedVariantIdForHistory = null
@@ -1388,17 +1952,27 @@ fun RateItemCard(
     cartQuantity: Double = 0.0,
     variantCartSnapshot: VariantCartSnapshot = VariantCartSnapshot.Empty,
     onAdjustCartQty: (key: String, desc: String, unitPrice: Double, delta: Double) -> Unit = { _, _, _, _ -> },
+    isPinned: Boolean = false,
+    isInPinnedSection: Boolean = false,
+    isReorderMode: Boolean = false,
+    showBottomDivider: Boolean = true,
+    onTogglePin: () -> Unit = {},
+    onMoveReorder: (deltaIndex: Int) -> Unit = {},
     onToggleSelect: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onViewHistory: (selectedVariantId: String?) -> Unit,
-    onUpdateRateClick: () -> Unit = {}
+    onUpdateRateClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     val isDark = isAppInDarkTheme()
     var isExpanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var offsetX by remember(item.id) { mutableFloatStateOf(0f) }
+    var crossedFullRightThreshold by remember(item.id) { mutableStateOf(false) }
+    var reorderDragAccumulator by remember(item.id) { mutableFloatStateOf(0f) }
+
     val animatedOffsetX by animateFloatAsState(
         targetValue = offsetX,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
@@ -1406,55 +1980,97 @@ fun RateItemCard(
     )
 
     val density = LocalDensity.current
-    val minSwipePx = remember(density) { with(density) { 60.dp.toPx() } }
-    val maxSwipePx = remember(density) { with(density) { 100.dp.toPx() } }
-    val openRightSwipePx = remember(density) { with(density) { 80.dp.toPx() } }
+    val minSwipePx = remember(density) { with(density) { 52.dp.toPx() } }
+    val maxRightSwipePx = remember(density) { with(density) { 145.dp.toPx() } }
+    val fullRightPinThresholdPx = remember(density) { with(density) { 118.dp.toPx() } }
+    val openRightSwipePx = remember(density) { with(density) { 102.dp.toPx() } }
+    val maxLeftSwipePx = remember(density) { with(density) { 100.dp.toPx() } }
     val openLeftSwipePx = remember(density) { with(density) { -80.dp.toPx() } }
+    val reorderRowStepPx = remember(density) { with(density) { 46.dp.toPx() } }
 
-    val stripeBg = if (isCompactView && rowIndex % 2 == 1) {
-        if (isDark) Color(0xFF202024) else Color(0xFFF8FAFC)
-    } else {
-        if (isDark) DarkSurface else SurfaceLight
+    val stripeBg = when {
+        isInPinnedSection -> if (isDark) Color(0xFF10281E) else Color(0xFFEAF7EE)
+        isCompactView && rowIndex % 2 == 1 -> if (isDark) Color(0xFF202024) else Color(0xFFF8FAFC)
+        else -> if (isDark) DarkSurface else SurfaceLight
     }
 
     val hasVariants = item.variants.isNotEmpty()
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(if (isDark) Color(0xFF1C1C1E) else Color.White)
+            .background(
+                if (isInPinnedSection) {
+                    if (isDark) Color(0xFF0C1E16) else Color(0xFFDDF2E4)
+                } else {
+                    if (isDark) Color(0xFF1C1C1E) else Color.White
+                }
+            )
     ) {
         // Swipe actions background (only composed when user actively swipes the row)
-        if (!isSelectionMode && (offsetX != 0f || animatedOffsetX != 0f)) {
+        if (!isSelectionMode && !isReorderMode && (offsetX != 0f || animatedOffsetX != 0f)) {
             Row(
                 modifier = Modifier
                     .matchParentSize()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (offsetX > 0 || animatedOffsetX > 0) {
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF007AFF).copy(alpha = 0.15f))
-                            .clickable {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                offsetX = 0f
-                                onEdit()
-                            },
-                        contentAlignment = Alignment.Center
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Edit item",
-                            tint = Color(0xFF007AFF),
-                            modifier = Modifier.size(18.dp)
-                        )
+                        // Swipe Right Action 1: Pin / Unpin (iOS Messages style)
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (crossedFullRightThreshold) StatusEmerald else StatusEmerald.copy(alpha = 0.2f)
+                                )
+                                .clickable {
+                                    offsetX = 0f
+                                    crossedFullRightThreshold = false
+                                    onTogglePin()
+                                }
+                                .testTag("swipe_pin_button_${item.id}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPinned) Icons.Outlined.PushPin else Icons.Default.PushPin,
+                                contentDescription = if (isPinned) "Unpin item" else "Pin item",
+                                tint = if (crossedFullRightThreshold) Color.White else StatusEmerald,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .graphicsLayer { rotationZ = if (isPinned) 0f else 35f }
+                            )
+                        }
+
+                        // Swipe Right Action 2: Edit item
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF007AFF).copy(alpha = 0.15f))
+                                .clickable {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    offsetX = 0f
+                                    crossedFullRightThreshold = false
+                                    onEdit()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "Edit item",
+                                tint = Color(0xFF007AFF),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 } else {
-                    Spacer(modifier = Modifier.width(38.dp))
+                    Spacer(modifier = Modifier.width(84.dp))
                 }
 
                 if (offsetX < 0 || animatedOffsetX < 0) {
@@ -1495,11 +2111,16 @@ fun RateItemCard(
                         stripeBg
                     }
                 )
-                .pointerInput(isSelectionMode) {
-                    if (!isSelectionMode) {
+                .pointerInput(isSelectionMode, isReorderMode, isPinned) {
+                    if (!isSelectionMode && !isReorderMode) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
                                 when {
+                                    offsetX >= fullRightPinThresholdPx -> {
+                                        offsetX = 0f
+                                        crossedFullRightThreshold = false
+                                        onTogglePin()
+                                    }
                                     offsetX < -minSwipePx -> {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         offsetX = openLeftSwipePx
@@ -1508,12 +2129,25 @@ fun RateItemCard(
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         offsetX = openRightSwipePx
                                     }
-                                    else -> offsetX = 0f
+                                    else -> {
+                                        offsetX = 0f
+                                        crossedFullRightThreshold = false
+                                    }
                                 }
                             },
+                            onDragCancel = {
+                                offsetX = 0f
+                                crossedFullRightThreshold = false
+                            },
                             onHorizontalDrag = { _, dragAmount ->
-                                val newOffset = offsetX + dragAmount
-                                offsetX = newOffset.coerceIn(-maxSwipePx, maxSwipePx)
+                                val newOffset = (offsetX + dragAmount).coerceIn(-maxLeftSwipePx, maxRightSwipePx)
+                                if (newOffset >= fullRightPinThresholdPx && !crossedFullRightThreshold) {
+                                    crossedFullRightThreshold = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                } else if (newOffset < fullRightPinThresholdPx && crossedFullRightThreshold) {
+                                    crossedFullRightThreshold = false
+                                }
+                                offsetX = newOffset
                             }
                         )
                     }
@@ -1522,6 +2156,9 @@ fun RateItemCard(
                     onClick = {
                         if (offsetX != 0f) {
                             offsetX = 0f
+                            crossedFullRightThreshold = false
+                        } else if (isReorderMode) {
+                            // No-op during reorder mode
                         } else if (isSelectionMode) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onToggleSelect()
@@ -1532,8 +2169,10 @@ fun RateItemCard(
                         }
                     },
                     onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
+                        if (!isReorderMode) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        }
                     }
                 )
                 .testTag("rate_item_card_${item.id}")
@@ -1544,13 +2183,50 @@ fun RateItemCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
-                            horizontal = 16.dp,
+                            horizontal = if (isInPinnedSection) 14.dp else 16.dp,
                             vertical = if (isCompactView) 3.dp else 6.dp
                         ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Left Selection Accent Checkbox
-                    if (isSelectionMode) {
+                    // Drag handle when in Reorder mode for Pinned items
+                    if (isReorderMode) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 10.dp)
+                                .size(28.dp)
+                                .pointerInput(item.id) {
+                                    detectVerticalDragGestures(
+                                        onDragStart = {
+                                            reorderDragAccumulator = 0f
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        },
+                                        onDragEnd = { reorderDragAccumulator = 0f },
+                                        onDragCancel = { reorderDragAccumulator = 0f },
+                                        onVerticalDrag = { change, dragAmount ->
+                                            change.consume()
+                                            reorderDragAccumulator += dragAmount
+                                            if (reorderDragAccumulator >= reorderRowStepPx) {
+                                                reorderDragAccumulator -= reorderRowStepPx
+                                                onMoveReorder(1)
+                                            } else if (reorderDragAccumulator <= -reorderRowStepPx) {
+                                                reorderDragAccumulator += reorderRowStepPx
+                                                onMoveReorder(-1)
+                                            }
+                                        }
+                                    )
+                                }
+                                .testTag("pinned_drag_handle_${item.id}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DragHandle,
+                                contentDescription = "Drag to reorder",
+                                tint = if (isDark) Color(0xFF34D399) else Color(0xFF15803D),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    } else if (isSelectionMode) {
+                        // Left Selection Accent Checkbox
                         IOSSelectionCheckmark(
                             isSelected = isSelected,
                             accentColor = StatusEmerald,
@@ -1816,11 +2492,20 @@ fun RateItemCard(
                 }
 
                 // Strict 1px Hairline Divider at bottom of each row
-                HorizontalDivider(
-                    color = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA),
-                    thickness = 1.dp,
-                    modifier = Modifier.padding(start = if (isSelectionMode) 50.dp else 16.dp)
-                )
+                if (showBottomDivider) {
+                    HorizontalDivider(
+                        color = if (isInPinnedSection) {
+                            if (isDark) Color(0xFF1F4D38).copy(alpha = 0.65f) else Color(0xFFB7E4C7).copy(alpha = 0.7f)
+                        } else {
+                            if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
+                        },
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(
+                            start = if (isSelectionMode || isReorderMode) 48.dp else 14.dp,
+                            end = if (isInPinnedSection) 14.dp else 0.dp
+                        )
+                    )
+                }
             }
         }
     }
@@ -3275,6 +3960,8 @@ fun PriceHistorySheet(
     item: RateItemEntity,
     initialVariantId: String? = null,
     currencySymbol: String,
+    isPinned: Boolean = false,
+    onTogglePin: () -> Unit = {},
     onDismiss: () -> Unit,
     onUpdateHistory: (RateItemEntity) -> Unit = {}
 ) {
@@ -3450,6 +4137,45 @@ fun PriceHistorySheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Small Pin / Unpin Button inside Item Detail Popup
+                    val pinBgColor by animateColorAsState(
+                        targetValue = if (isPinned) Color(0xFF379358) else (if (isDark) Color(0xFF1B2E21) else Color(0xFFEAF6ED)),
+                        animationSpec = tween(220),
+                        label = "detailPinBg"
+                    )
+                    val pinIconColor by animateColorAsState(
+                        targetValue = if (isPinned) Color.White else Color(0xFF379358),
+                        animationSpec = tween(220),
+                        label = "detailPinIcon"
+                    )
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onTogglePin()
+                        },
+                        shape = CircleShape,
+                        color = pinBgColor,
+                        border = BorderStroke(
+                            1.dp,
+                            if (isPinned) Color(0xFF379358) else Color(0xFF379358).copy(alpha = 0.25f)
+                        ),
+                        shadowElevation = if (isPinned) 3.dp else 1.dp,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .testTag("detail_popup_pin_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isPinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                                contentDescription = if (isPinned) "Unpin item" else "Pin item",
+                                tint = pinIconColor,
+                                modifier = Modifier
+                                    .size(19.dp)
+                                    .graphicsLayer { rotationZ = if (isPinned) 35f else 0f }
+                            )
+                        }
+                    }
+
                     // Circular Graph Toggle Button
                     Surface(
                         onClick = {

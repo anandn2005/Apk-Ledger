@@ -36,6 +36,7 @@ class LedgerRepository(
     val allInvoices: Flow<List<InvoiceEntity>> = dao.getAllInvoices().distinctUntilChanged()
     val allAuditLogs: Flow<List<AuditLogEntity>> = dao.getAllAuditLogs().distinctUntilChanged()
     val allRateItems: Flow<List<RateItemEntity>> = dao.getAllRateItems().distinctUntilChanged()
+    val allNotes: Flow<List<NoteEntity>> = dao.getAllNotes().distinctUntilChanged()
 
     // Combined Flow: Customer list enriched with computed running balance
     val customersWithBalance: Flow<List<CustomerWithBalance>> = combine(
@@ -167,11 +168,25 @@ class LedgerRepository(
             val updated = customer.copy(lastUpdated = now)
             dao.updateCustomer(updated)
             syncManager?.pushCustomer(updated)
+            val linkedNotes = dao.getAllNotesList().filter { it.linkedCustomerId == customer.id && it.linkedCustomerName != customer.name }
+            if (linkedNotes.isNotEmpty()) {
+                val updatedNotes = linkedNotes.map { it.copy(linkedCustomerName = customer.name, updatedAt = now) }
+                dao.insertNotes(updatedNotes)
+                updatedNotes.forEach { syncManager?.pushNote(it) }
+            }
         }
     }
 
     suspend fun deleteCustomerWithData(customerId: String) {
         withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val linkedNotes = dao.getAllNotesList().filter { it.linkedCustomerId == customerId }
+            if (linkedNotes.isNotEmpty()) {
+                dao.unlinkCustomerFromNotes(customerId, now)
+                linkedNotes.forEach { note ->
+                    syncManager?.pushNote(note.copy(linkedCustomerId = "", linkedCustomerName = "", updatedAt = now))
+                }
+            }
             dao.deleteTransactionsForCustomer(customerId)
             dao.deleteCustomerById(customerId)
             syncManager?.deleteCustomer(customerId)
@@ -182,6 +197,54 @@ class LedgerRepository(
         withContext(Dispatchers.IO) {
             ids.forEach { id ->
                 deleteCustomerWithData(id)
+            }
+        }
+    }
+
+    // --- NOTES (PRIVATE NOTEPAD - NEVER LOGGED TO TRASH/AUDIT OR EXPORTS) ---
+    suspend fun getNoteById(id: String): NoteEntity? = withContext(Dispatchers.IO) {
+        dao.getNoteById(id)
+    }
+
+    suspend fun upsertNote(note: NoteEntity) {
+        withContext(Dispatchers.IO) {
+            dao.insertNote(note)
+            syncManager?.pushNote(note)
+        }
+    }
+
+    suspend fun upsertNotes(notes: List<NoteEntity>) {
+        if (notes.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            dao.insertNotes(notes)
+            notes.forEach { syncManager?.pushNote(it) }
+        }
+    }
+
+    suspend fun deleteNotePermanently(noteId: String) {
+        withContext(Dispatchers.IO) {
+            dao.deleteNoteById(noteId)
+            syncManager?.deleteNote(noteId)
+        }
+    }
+
+    suspend fun deleteNotesPermanently(noteIds: List<String>) {
+        if (noteIds.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            dao.deleteNotesByIds(noteIds)
+            syncManager?.deleteNotes(noteIds)
+        }
+    }
+
+    suspend fun reassignNoteLabelToGeneral(deletedLabel: String) {
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val affected = dao.getAllNotesList().filter { it.label.equals(deletedLabel, ignoreCase = true) }
+            if (affected.isNotEmpty()) {
+                dao.reassignNoteLabel(deletedLabel, NoteEntity.LABEL_GENERAL, now)
+                affected.forEach { note ->
+                    syncManager?.pushNote(note.copy(label = NoteEntity.LABEL_GENERAL, updatedAt = now))
+                }
             }
         }
     }

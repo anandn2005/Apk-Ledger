@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".LedgerApplication"
@@ -31,6 +34,7 @@
                 <action android:name="com.example.ACTION_ADD_SALE" />
                 <action android:name="com.example.ACTION_ADD_DEPOSIT" />
                 <action android:name="com.example.ACTION_VIEW_TODAY" />
+                <action android:name="com.example.ACTION_OPEN_NOTE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data
@@ -66,6 +70,21 @@
             android:name=".widget.ItemRateWidgetService"
             android:permission="android.permission.BIND_REMOTEVIEWS"
             android:exported="false" />
+
+        <!-- Note Reminder Notification & Reboot Persistence Receivers -->
+        <receiver
+            android:name=".notes.NoteReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".notes.NoteBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

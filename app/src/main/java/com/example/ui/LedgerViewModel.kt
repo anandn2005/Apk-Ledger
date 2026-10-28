@@ -41,6 +41,8 @@ data class LedgerUiState(
     val rateMaxPriceFilter: Double = 1000.0,
     val rateMaxPriceLimit: Double = 1000.0,
     val pinnedCustomerIds: Set<String> = emptySet(),
+    val pinnedRateItemIds: List<String> = emptyList(),
+    val isPinnedItemsCollapsed: Boolean = false,
     val currencySymbol: String = "₹",
     val businessName: String = "My Business Ledger",
     val businessPhone: String = "",
@@ -65,7 +67,10 @@ data class LedgerUiState(
     val categoryIconMap: Map<String, String> = emptyMap(),
     val selectedLanguage: AppLanguage = AppLanguage.ENGLISH,
     val availableUnits: List<String> = AppPreferencesManager.defaultSystemUnits,
-    val hiddenCategories: Set<String> = emptySet()
+    val hiddenCategories: Set<String> = emptySet(),
+    val notes: List<NoteEntity> = emptyList(),
+    val customNoteLabels: List<String> = emptyList(),
+    val hasDueOrOverdueNoteReminder: Boolean = false
 )
 
 sealed interface LedgerEvent {
@@ -155,7 +160,12 @@ private data class RateFilterState(
     val minPrice: Double,
     val maxPrice: Double,
     val maxLimit: Double,
-    val categoryIcons: Map<String, String> = emptyMap()
+    val categoryIcons: Map<String, String> = emptyMap(),
+    val pinnedRateItemIds: List<String> = emptyList(),
+    val isPinnedItemsCollapsed: Boolean = false,
+    val notes: List<NoteEntity> = emptyList(),
+    val customNoteLabels: List<String> = emptyList(),
+    val hasDueOrOverdueNoteReminder: Boolean = false
 )
 
 class LedgerViewModel(application: Application) : AndroidViewModel(application) {
@@ -176,6 +186,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     private val _failedPinAttempts = MutableStateFlow(0)
     private val _isLockedOut = MutableStateFlow(false)
     private val _pinnedCustomerIds = MutableStateFlow<Set<String>>(prefs.pinnedCustomerIds)
+    private val _pinnedRateItemIds = MutableStateFlow<List<String>>(prefs.pinnedRateItemIds)
+    private val _isPinnedItemsCollapsed = MutableStateFlow(prefs.isPinnedItemsCollapsed)
 
     private val _rateSearchQuery = MutableStateFlow("")
     private val _selectedRateCategory = MutableStateFlow("ALL")
@@ -191,6 +203,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     private val _selectedLanguage = MutableStateFlow(AppLanguage.fromCode(prefs.selectedLanguageCode))
     private val _availableUnits = MutableStateFlow<List<String>>(prefs.customUnits)
     private val _hiddenCategories = MutableStateFlow<Set<String>>(prefs.hiddenCategories)
+    private val _customNoteLabels = MutableStateFlow<List<String>>(prefs.customNoteLabels)
 
     private fun loadCategoryIconMap(): Map<String, String> {
         return try {
@@ -205,9 +218,18 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         repository.syncManager = syncManager
+        syncManager.onPinnedItemsUpdated = { updatedPinnedIds, updatedCollapsed ->
+            _pinnedRateItemIds.value = updatedPinnedIds
+            _isPinnedItemsCollapsed.value = updatedCollapsed
+        }
+        syncManager.onCustomNoteLabelsUpdated = { updatedLabels ->
+            _customNoteLabels.value = updatedLabels
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 repository.ensureStartingEntriesForRateItems()
+                val existingNotes = dao.getAllNotesList()
+                com.example.notes.NoteReminderScheduler.rescheduleAllFutureReminders(getApplication(), existingNotes)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -322,10 +344,27 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         RateFilterConfig(query, cat, customCats, priceFilter, iconMap)
     }.distinctUntilChanged()
 
+    private data class PinnedAndNotesSubState(
+        val ids: List<String>,
+        val isCollapsed: Boolean,
+        val notes: List<NoteEntity>,
+        val customNoteLabels: List<String>
+    )
+
+    private val pinnedRateStateFlow = combine(
+        _pinnedRateItemIds,
+        _isPinnedItemsCollapsed,
+        repository.allNotes,
+        _customNoteLabels
+    ) { ids, collapsed, allNotes, noteLabels ->
+        PinnedAndNotesSubState(ids, collapsed, allNotes, noteLabels)
+    }.distinctUntilChanged()
+
     private val rateFilterStateFlow: Flow<RateFilterState> = combine(
         repository.allRateItems,
-        rateConfigFlow
-    ) { rawItems, config ->
+        rateConfigFlow,
+        pinnedRateStateFlow
+    ) { rawItems, config, pinnedState ->
         val query = config.query.trim()
         val isQueryBlank = query.isEmpty()
         val category = config.category
@@ -380,7 +419,32 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        RateFilterState(filtered, catSet.toList(), config.query, category, minP, maxP, maxLimit, iconMap)
+        val endOfTodayCal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }
+        val endOfTodayMillis = endOfTodayCal.timeInMillis
+        val hasDueOrOverdue = pinnedState.notes.any { note ->
+            !note.isDone && note.reminderTime in 1L..endOfTodayMillis
+        }
+
+        RateFilterState(
+            items = filtered,
+            categories = catSet.toList(),
+            searchQuery = config.query,
+            category = category,
+            minPrice = minP,
+            maxPrice = maxP,
+            maxLimit = maxLimit,
+            categoryIcons = iconMap,
+            pinnedRateItemIds = pinnedState.ids,
+            isPinnedItemsCollapsed = pinnedState.isCollapsed,
+            notes = pinnedState.notes,
+            customNoteLabels = pinnedState.customNoteLabels,
+            hasDueOrOverdueNoteReminder = hasDueOrOverdue
+        )
     }.distinctUntilChanged().flowOn(Dispatchers.Default)
 
     val uiState: StateFlow<LedgerUiState> = combine(
@@ -439,6 +503,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             rateMaxPriceFilter = rateState.maxPrice,
             rateMaxPriceLimit = rateState.maxLimit,
             pinnedCustomerIds = pinnedIds,
+            pinnedRateItemIds = rateState.pinnedRateItemIds,
+            isPinnedItemsCollapsed = rateState.isPinnedItemsCollapsed,
             currencySymbol = prefs.currencySymbol,
             businessName = prefs.businessName,
             businessPhone = prefs.businessPhone,
@@ -463,7 +529,10 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             categoryIconMap = rateState.categoryIcons,
             selectedLanguage = cloudFilter.selectedLanguage,
             availableUnits = cloudFilter.availableUnits,
-            hiddenCategories = cloudFilter.hiddenCategories
+            hiddenCategories = cloudFilter.hiddenCategories,
+            notes = rateState.notes,
+            customNoteLabels = rateState.customNoteLabels,
+            hasDueOrOverdueNoteReminder = rateState.hasDueOrOverdueNoteReminder
         )
     }.distinctUntilChanged().flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
@@ -725,6 +794,57 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         prefs.pinnedCustomerIds = updated
         _pinnedCustomerIds.value = updated
         _userMessage.value = if (isCurrentlyPinned) "Customer unpinned" else "Customer pinned to top"
+    }
+
+    // --- PINNED RATE ITEMS MANAGEMENT ---
+    fun setPinnedRateItemsOrder(orderedIds: List<String>) {
+        val clean = orderedIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        prefs.pinnedRateItemIds = clean
+        _pinnedRateItemIds.value = clean
+        syncManager.pushPinnedRateItems(clean, _isPinnedItemsCollapsed.value)
+    }
+
+    fun pinRateItems(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        val current = _pinnedRateItemIds.value.toMutableList()
+        ids.forEach { id ->
+            val trimmed = id.trim()
+            if (trimmed.isNotBlank() && !current.contains(trimmed)) {
+                current.add(trimmed)
+            }
+        }
+        setPinnedRateItemsOrder(current)
+    }
+
+    fun unpinRateItems(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        val toRemove = ids.map { it.trim() }.toSet()
+        val updated = _pinnedRateItemIds.value.filter { it !in toRemove }
+        setPinnedRateItemsOrder(updated)
+    }
+
+    fun togglePinRateItem(itemId: String): Boolean {
+        val cleanId = itemId.trim()
+        if (cleanId.isBlank()) return false
+        val current = _pinnedRateItemIds.value
+        val isCurrentlyPinned = current.contains(cleanId)
+        val updated = if (isCurrentlyPinned) {
+            current.filter { it != cleanId }
+        } else {
+            current + cleanId
+        }
+        setPinnedRateItemsOrder(updated)
+        return !isCurrentlyPinned
+    }
+
+    fun unpinAllRateItems() {
+        setPinnedRateItemsOrder(emptyList())
+    }
+
+    fun setPinnedItemsCollapsed(collapsed: Boolean) {
+        prefs.isPinnedItemsCollapsed = collapsed
+        _isPinnedItemsCollapsed.value = collapsed
+        syncManager.pushPinnedRateItems(_pinnedRateItemIds.value, collapsed)
     }
 
     fun selectCustomer(id: String?) {
@@ -1307,6 +1427,9 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteRateItem(item: RateItemEntity) {
         lastDeletedSnapshot = null
         lastDeletedRateItems = listOf(item)
+        if (_pinnedRateItemIds.value.contains(item.id)) {
+            unpinRateItems(listOf(item.id))
+        }
         viewModelScope.launch {
             repository.deleteRateItem(item)
             com.example.widget.ItemRateWidgetProvider.notifyDataChanged(getApplication())
@@ -1317,6 +1440,9 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun bulkDeleteRateItems(ids: List<String>) {
         lastDeletedSnapshot = null
         lastDeletedRateItems = uiState.value.rateItems.filter { ids.contains(it.id) }
+        if (ids.any { _pinnedRateItemIds.value.contains(it) }) {
+            unpinRateItems(ids)
+        }
         viewModelScope.launch {
             repository.bulkDeleteRateItems(ids)
             com.example.widget.ItemRateWidgetProvider.notifyDataChanged(getApplication())
@@ -1498,6 +1624,99 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         map.forEach { (k, v) -> json.put(k, v) }
         prefs.categoryIconMapJson = json.toString()
         _categoryIconMap.value = map
+    }
+
+    // --- NOTES MANAGEMENT ---
+    fun saveNote(note: NoteEntity) {
+        viewModelScope.launch {
+            if (note.isEmptyNote) {
+                com.example.notes.NoteReminderScheduler.cancelReminder(getApplication(), note.id)
+                val existing = repository.getNoteById(note.id)
+                if (existing != null) {
+                    repository.deleteNotePermanently(note.id)
+                }
+            } else {
+                repository.upsertNote(note)
+                com.example.notes.NoteReminderScheduler.scheduleReminder(getApplication(), note)
+            }
+        }
+    }
+
+    fun deleteNotesPermanently(notesToDelete: List<NoteEntity>) {
+        if (notesToDelete.isEmpty()) return
+        val ids = notesToDelete.map { it.id }
+        ids.forEach { com.example.notes.NoteReminderScheduler.cancelReminder(getApplication(), it) }
+        viewModelScope.launch {
+            repository.deleteNotesPermanently(ids)
+        }
+    }
+
+    fun restoreDeletedNotes(notesToRestore: List<NoteEntity>) {
+        if (notesToRestore.isEmpty()) return
+        viewModelScope.launch {
+            repository.upsertNotes(notesToRestore)
+            notesToRestore.forEach { note ->
+                com.example.notes.NoteReminderScheduler.scheduleReminder(getApplication(), note)
+            }
+        }
+    }
+
+    fun setNotesPinned(noteIds: Collection<String>, pinned: Boolean) {
+        if (noteIds.isEmpty()) return
+        val idSet = noteIds.toSet()
+        val now = System.currentTimeMillis()
+        val updatedNotes = uiState.value.notes
+            .filter { it.id in idSet && it.isPinned != pinned }
+            .map { it.copy(isPinned = pinned, updatedAt = now) }
+        if (updatedNotes.isNotEmpty()) {
+            viewModelScope.launch {
+                repository.upsertNotes(updatedNotes)
+            }
+        }
+    }
+
+    fun setNotesDone(noteIds: Collection<String>, done: Boolean) {
+        if (noteIds.isEmpty()) return
+        val idSet = noteIds.toSet()
+        val now = System.currentTimeMillis()
+        val updatedNotes = uiState.value.notes
+            .filter { it.id in idSet && it.isDone != done }
+            .map { it.copy(isDone = done, updatedAt = now) }
+        if (updatedNotes.isNotEmpty()) {
+            viewModelScope.launch {
+                repository.upsertNotes(updatedNotes)
+                updatedNotes.forEach { note ->
+                    com.example.notes.NoteReminderScheduler.scheduleReminder(getApplication(), note)
+                }
+            }
+        }
+    }
+
+    fun addCustomNoteLabel(labelName: String): String {
+        val cleaned = labelName.trim()
+        if (cleaned.isBlank()) return NoteEntity.LABEL_GENERAL
+        val matchingDefault = NoteEntity.DEFAULT_LABELS.firstOrNull { it.equals(cleaned, ignoreCase = true) }
+        if (matchingDefault != null) return matchingDefault
+        val current = _customNoteLabels.value.toMutableList()
+        val existingCustom = current.firstOrNull { it.equals(cleaned, ignoreCase = true) }
+        if (existingCustom != null) return existingCustom
+        current.add(cleaned)
+        prefs.customNoteLabels = current
+        _customNoteLabels.value = current
+        syncManager.pushCustomNoteLabels(current)
+        return cleaned
+    }
+
+    fun deleteCustomNoteLabel(labelName: String) {
+        val cleaned = labelName.trim()
+        if (cleaned.isBlank() || NoteEntity.DEFAULT_LABELS.any { it.equals(cleaned, ignoreCase = true) }) return
+        val updated = _customNoteLabels.value.filterNot { it.equals(cleaned, ignoreCase = true) }
+        prefs.customNoteLabels = updated
+        _customNoteLabels.value = updated
+        syncManager.pushCustomNoteLabels(updated)
+        viewModelScope.launch {
+            repository.reassignNoteLabelToGeneral(cleaned)
+        }
     }
 }
 

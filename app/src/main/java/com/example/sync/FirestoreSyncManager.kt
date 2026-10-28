@@ -59,6 +59,11 @@ class FirestoreSyncManager(
     private var itemsListener: ListenerRegistration? = null
     private var rateItemsListener: ListenerRegistration? = null
     private var categoriesListener: ListenerRegistration? = null
+    private var settingsListener: ListenerRegistration? = null
+    private var notesListener: ListenerRegistration? = null
+
+    var onPinnedItemsUpdated: ((List<String>, Boolean) -> Unit)? = null
+    var onCustomNoteLabelsUpdated: ((List<String>) -> Unit)? = null
 
     init {
         registerNetworkCallback()
@@ -206,6 +211,8 @@ class FirestoreSyncManager(
             syncedCount += syncInvoices(firestore, uid)
             // 5. Sync Categories & Vector Icons
             syncedCount += syncCategories(firestore, uid)
+            // 6. Sync Notes
+            syncedCount += syncNotes(firestore, uid)
             syncBusinessDetails(firestore, uid)
 
             val now = System.currentTimeMillis()
@@ -291,9 +298,100 @@ fun pushBusinessDetails() {
                 if (remoteGstin.isNotBlank()) {
                     prefs.businessGstin = remoteGstin
                 }
+
+                val remotePinnedUpdatedAt = snapshot.getLong("pinnedRateItemsUpdatedAt") ?: 0L
+                val localPinnedUpdatedAt = prefs.pinnedRateItemsLastUpdated
+                if (remotePinnedUpdatedAt > localPinnedUpdatedAt && snapshot.contains("pinnedRateItemIds")) {
+                    val rawPinned = snapshot.getString("pinnedRateItemIds") ?: ""
+                    val parsedIds = if (rawPinned.isBlank()) emptyList() else rawPinned.split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                    val remoteCollapsed = snapshot.getBoolean("isPinnedItemsCollapsed") ?: prefs.isPinnedItemsCollapsed
+                    prefs.pinnedRateItemIds = parsedIds
+                    prefs.isPinnedItemsCollapsed = remoteCollapsed
+                    prefs.pinnedRateItemsLastUpdated = remotePinnedUpdatedAt
+                    onPinnedItemsUpdated?.invoke(parsedIds, remoteCollapsed)
+                } else if (localPinnedUpdatedAt > remotePinnedUpdatedAt) {
+                    val pushMap = hashMapOf<String, Any>(
+                        "pinnedRateItemIds" to prefs.pinnedRateItemIds.joinToString(","),
+                        "isPinnedItemsCollapsed" to prefs.isPinnedItemsCollapsed,
+                        "pinnedRateItemsUpdatedAt" to localPinnedUpdatedAt
+                    )
+                    try {
+                        FirebaseAuthManager.awaitTask { docRef.set(pushMap, com.google.firebase.firestore.SetOptions.merge()) }
+                    } catch (_: Exception) {}
+                }
+
+                if (snapshot.contains("customNoteLabels")) {
+                    val rawNoteLabels = snapshot.getString("customNoteLabels") ?: ""
+                    val parsedLabels = if (rawNoteLabels.isBlank()) emptyList() else rawNoteLabels.split("|||").map { it.trim() }.filter { it.isNotBlank() && it !in NoteEntity.DEFAULT_LABELS }.distinct()
+                    val merged = (prefs.customNoteLabels + parsedLabels).distinct()
+                    if (merged != prefs.customNoteLabels) {
+                        prefs.customNoteLabels = merged
+                        onCustomNoteLabelsUpdated?.invoke(merged)
+                    }
+                } else if (prefs.customNoteLabels.isNotEmpty()) {
+                    try {
+                        FirebaseAuthManager.awaitTask {
+                            docRef.set(hashMapOf("customNoteLabels" to prefs.customNoteLabels.joinToString("|||")), com.google.firebase.firestore.SetOptions.merge())
+                        }
+                    } catch (_: Exception) {}
+                }
+            } else if (prefs.pinnedRateItemIds.isNotEmpty() || prefs.pinnedRateItemsLastUpdated > 0L) {
+                val pushMap = hashMapOf<String, Any>(
+                    "pinnedRateItemIds" to prefs.pinnedRateItemIds.joinToString(","),
+                    "isPinnedItemsCollapsed" to prefs.isPinnedItemsCollapsed,
+                    "pinnedRateItemsUpdatedAt" to prefs.pinnedRateItemsLastUpdated.coerceAtLeast(System.currentTimeMillis()),
+                    "customNoteLabels" to prefs.customNoteLabels.joinToString("|||")
+                )
+                try {
+                    FirebaseAuthManager.awaitTask { docRef.set(pushMap, com.google.firebase.firestore.SetOptions.merge()) }
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed syncing business details: ${e.message}")
+        }
+    }
+
+    fun pushCustomNoteLabels(labels: List<String>) {
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val map = hashMapOf<String, Any>(
+                    "customNoteLabels" to labels.joinToString("|||"),
+                    "last_updated" to System.currentTimeMillis()
+                )
+                val doc = firestore.collection("users").document(user.uid).collection("settings").document("business_profile")
+                FirebaseAuthManager.awaitTask { doc.set(map, com.google.firebase.firestore.SetOptions.merge()) }
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed pushing custom note labels: ${e.message}")
+                indicateOfflineOrFallback()
+            }
+        }
+    }
+
+    fun pushPinnedRateItems(pinnedIds: List<String>, isCollapsed: Boolean) {
+        val now = System.currentTimeMillis()
+        prefs.pinnedRateItemsLastUpdated = now
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val map = hashMapOf<String, Any>(
+                    "pinnedRateItemIds" to pinnedIds.joinToString(","),
+                    "isPinnedItemsCollapsed" to isCollapsed,
+                    "pinnedRateItemsUpdatedAt" to now,
+                    "last_updated" to now
+                )
+                val doc = firestore.collection("users").document(user.uid).collection("settings").document("business_profile")
+                FirebaseAuthManager.awaitTask { doc.set(map, com.google.firebase.firestore.SetOptions.merge()) }
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed pushing pinned rate items: ${e.message}")
+                indicateOfflineOrFallback()
+            }
         }
     }
 
@@ -576,6 +674,41 @@ fun pushBusinessDetails() {
                     }
                 }
             }
+
+            // Real-time snapshot stream on settings/business_profile for pinned items sync
+            val settingsDoc = firestore.collection("users").document(uid).collection("settings").document("business_profile")
+            settingsListener = settingsDoc.addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                val remoteUpdatedAt = snapshot.getLong("pinnedRateItemsUpdatedAt") ?: 0L
+                if (remoteUpdatedAt > prefs.pinnedRateItemsLastUpdated && snapshot.contains("pinnedRateItemIds")) {
+                    val rawPinned = snapshot.getString("pinnedRateItemIds") ?: ""
+                    val parsedIds = if (rawPinned.isBlank()) emptyList() else rawPinned.split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                    val remoteCollapsed = snapshot.getBoolean("isPinnedItemsCollapsed") ?: prefs.isPinnedItemsCollapsed
+                    prefs.pinnedRateItemIds = parsedIds
+                    prefs.isPinnedItemsCollapsed = remoteCollapsed
+                    prefs.pinnedRateItemsLastUpdated = remoteUpdatedAt
+                    onPinnedItemsUpdated?.invoke(parsedIds, remoteCollapsed)
+                }
+                if (snapshot.contains("customNoteLabels")) {
+                    val rawNoteLabels = snapshot.getString("customNoteLabels") ?: ""
+                    val parsedLabels = if (rawNoteLabels.isBlank()) emptyList() else rawNoteLabels.split("|||").map { it.trim() }.filter { it.isNotBlank() && it !in NoteEntity.DEFAULT_LABELS }.distinct()
+                    if (parsedLabels != prefs.customNoteLabels) {
+                        prefs.customNoteLabels = parsedLabels
+                        onCustomNoteLabelsUpdated?.invoke(parsedLabels)
+                    }
+                }
+            }
+
+            // Real-time snapshot stream on "notes" collection
+            val notesCol = firestore.collection("users").document(uid).collection("notes")
+            notesListener = notesCol.addSnapshotListener { snapshot, error ->
+                if (error != null) return@addSnapshotListener
+                if (snapshot != null) {
+                    syncScope.launch {
+                        handleNotesSnapshot(snapshot)
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed registering snapshot streams: ${e.message}")
         }
@@ -586,10 +719,14 @@ fun pushBusinessDetails() {
             itemsListener?.remove()
             rateItemsListener?.remove()
             categoriesListener?.remove()
+            settingsListener?.remove()
+            notesListener?.remove()
         } catch (_: Exception) {}
         itemsListener = null
         rateItemsListener = null
         categoriesListener = null
+        settingsListener = null
+        notesListener = null
     }
 
     private suspend fun handleItemsSnapshot(snapshot: com.google.firebase.firestore.QuerySnapshot) {
@@ -854,6 +991,175 @@ fun pushBusinessDetails() {
                 indicateSynced()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed deleting invoice on cloud: ${e.message}")
+                indicateOfflineOrFallback()
+            }
+        }
+    }
+
+    private fun docToNote(doc: com.google.firebase.firestore.DocumentSnapshot): NoteEntity? {
+        val id = (doc.getString("id") ?: doc.id).replace("/", "_").trim()
+        if (id.isBlank()) return null
+        val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+        val updatedAt = doc.getLong("updatedAt") ?: doc.getLong("last_updated") ?: createdAt
+        return NoteEntity(
+            id = id,
+            text = doc.getString("text") ?: "",
+            label = doc.getString("label") ?: NoteEntity.LABEL_GENERAL,
+            isChecklist = doc.getBoolean("isChecklist") ?: false,
+            checklistJson = doc.getString("checklistJson") ?: "[]",
+            isPinned = doc.getBoolean("isPinned") ?: false,
+            isDone = doc.getBoolean("isDone") ?: false,
+            linkedCustomerId = doc.getString("linkedCustomerId") ?: "",
+            linkedCustomerName = doc.getString("linkedCustomerName") ?: "",
+            reminderTime = doc.getLong("reminderTime") ?: 0L,
+            createdAt = createdAt,
+            updatedAt = updatedAt
+        )
+    }
+
+    private suspend fun syncNotes(firestore: FirebaseFirestore, uid: String): Int {
+        val collection = firestore.collection("users").document(uid).collection("notes")
+        val snapshot = try {
+            FirebaseAuthManager.awaitTask { collection.get() }
+        } catch (_: Exception) {
+            return 0
+        }
+        val remoteMap = snapshot.documents.mapNotNull { docToNote(it) }.associateBy { it.id }
+        val localList = dao.getAllNotesList()
+        val localMap = localList.associateBy { it.id }
+
+        val toInsertLocally = mutableListOf<NoteEntity>()
+        for ((id, remote) in remoteMap) {
+            val local = localMap[id]
+            if (local == null || remote.updatedAt > local.updatedAt) {
+                toInsertLocally.add(remote)
+            }
+        }
+        if (toInsertLocally.isNotEmpty()) {
+            dao.insertNotes(toInsertLocally)
+            com.example.notes.NoteReminderScheduler.rescheduleAllFutureReminders(context, toInsertLocally)
+        }
+
+        var pushed = 0
+        for ((id, local) in localMap) {
+            val remote = remoteMap[id]
+            if (remote == null || local.updatedAt > remote.updatedAt) {
+                pushNoteToFirestore(collection, local)
+                pushed++
+            }
+        }
+        return toInsertLocally.size + pushed
+    }
+
+    private suspend fun handleNotesSnapshot(snapshot: com.google.firebase.firestore.QuerySnapshot) {
+        val notesToUpsert = mutableListOf<NoteEntity>()
+        val idsToDelete = mutableListOf<String>()
+
+        for (change in snapshot.documentChanges) {
+            val doc = change.document
+            val note = docToNote(doc)
+            when (change.type) {
+                com.google.firebase.firestore.DocumentChange.Type.ADDED,
+                com.google.firebase.firestore.DocumentChange.Type.MODIFIED -> {
+                    if (note != null) {
+                        val local = dao.getNoteById(note.id)
+                        if (local == null || note.updatedAt >= local.updatedAt) {
+                            notesToUpsert.add(note)
+                        }
+                    }
+                }
+                com.google.firebase.firestore.DocumentChange.Type.REMOVED -> {
+                    val id = note?.id ?: doc.id.replace("/", "_")
+                    idsToDelete.add(id)
+                }
+            }
+        }
+
+        if (idsToDelete.isNotEmpty()) {
+            idsToDelete.forEach { com.example.notes.NoteReminderScheduler.cancelReminder(context, it) }
+            dao.deleteNotesByIds(idsToDelete)
+        }
+        if (notesToUpsert.isNotEmpty()) {
+            dao.insertNotes(notesToUpsert)
+            notesToUpsert.forEach { com.example.notes.NoteReminderScheduler.scheduleReminder(context, it) }
+            indicateSynced()
+        }
+    }
+
+    private suspend fun pushNoteToFirestore(col: com.google.firebase.firestore.CollectionReference, note: NoteEntity) {
+        val cleanId = note.id.replace("/", "_").trim()
+        if (cleanId.isBlank()) return
+        val map = hashMapOf<String, Any>(
+            "id" to cleanId,
+            "text" to note.text,
+            "label" to note.label,
+            "isChecklist" to note.isChecklist,
+            "checklistJson" to note.checklistJson,
+            "isPinned" to note.isPinned,
+            "isDone" to note.isDone,
+            "linkedCustomerId" to note.linkedCustomerId,
+            "linkedCustomerName" to note.linkedCustomerName,
+            "reminderTime" to note.reminderTime,
+            "createdAt" to note.createdAt,
+            "updatedAt" to note.updatedAt,
+            "last_updated" to note.updatedAt
+        )
+        FirebaseAuthManager.awaitTask { col.document(cleanId).set(map, SetOptions.merge()) }
+    }
+
+    fun pushNote(note: NoteEntity) {
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val col = firestore.collection("users").document(user.uid).collection("notes")
+                pushNoteToFirestore(col, note)
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed pushing note: ${e.message}")
+                indicateOfflineOrFallback()
+            }
+        }
+    }
+
+    fun deleteNote(noteId: String) {
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        val cleanId = noteId.replace("/", "_").trim()
+        if (cleanId.isBlank()) return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val doc = firestore.collection("users").document(user.uid).collection("notes").document(cleanId)
+                FirebaseAuthManager.awaitTask { doc.delete() }
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed deleting note on cloud: ${e.message}")
+                indicateOfflineOrFallback()
+            }
+        }
+    }
+
+    fun deleteNotes(noteIds: Collection<String>) {
+        if (noteIds.isEmpty()) return
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val col = firestore.collection("users").document(user.uid).collection("notes")
+                for (rawId in noteIds) {
+                    val cleanId = rawId.replace("/", "_").trim()
+                    if (cleanId.isNotBlank()) {
+                        try {
+                            FirebaseAuthManager.awaitTask { col.document(cleanId).delete() }
+                        } catch (_: Exception) {}
+                    }
+                }
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed deleting notes on cloud: ${e.message}")
                 indicateOfflineOrFallback()
             }
         }

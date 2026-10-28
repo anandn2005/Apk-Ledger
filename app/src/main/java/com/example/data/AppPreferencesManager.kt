@@ -48,6 +48,24 @@ class AppPreferencesManager(context: Context) {
             prefs.edit().putString("pinned_customer_ids", value.joinToString(",")).apply()
         }
 
+    var pinnedRateItemIds: List<String>
+        get() {
+            val str = prefs.getString("pinned_rate_item_ids", "") ?: ""
+            if (str.isBlank()) return emptyList()
+            return str.split(",").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        }
+        set(value) {
+            prefs.edit().putString("pinned_rate_item_ids", value.map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString(",")).apply()
+        }
+
+    var isPinnedItemsCollapsed: Boolean
+        get() = prefs.getBoolean("pinned_rate_items_collapsed", false)
+        set(value) = prefs.edit().putBoolean("pinned_rate_items_collapsed", value).apply()
+
+    var pinnedRateItemsLastUpdated: Long
+        get() = prefs.getLong("pinned_rate_items_last_updated", 0L)
+        set(value) = prefs.edit().putLong("pinned_rate_items_last_updated", value).apply()
+
     var customCategories: List<String>
         get() {
             val str = prefs.getString("custom_categories", "") ?: ""
@@ -122,6 +140,17 @@ class AppPreferencesManager(context: Context) {
     var reminderTemplate: String
         get() = prefs.getString("whatsapp_reminder_template", "") ?: ""
         set(value) = prefs.edit().putString("whatsapp_reminder_template", value).apply()
+
+    var customNoteLabels: List<String>
+        get() {
+            val str = prefs.getString("custom_note_labels", "") ?: ""
+            if (str.isBlank()) return emptyList()
+            return str.split("|||").map { it.trim() }.filter { it.isNotBlank() && it !in NoteEntity.DEFAULT_LABELS }.distinct()
+        }
+        set(value) {
+            val cleaned = value.map { it.trim() }.filter { it.isNotBlank() && it !in NoteEntity.DEFAULT_LABELS }.distinct()
+            prefs.edit().putString("custom_note_labels", cleaned.joinToString("|||")).apply()
+        }
 
     companion object {
         val defaultSystemUnits = listOf("Kg", "gm", "Ltr", "mL", "Pcs", "Pkt", "Box", "Carton", "Dozen", "Bora", "Tin", "Meter")
