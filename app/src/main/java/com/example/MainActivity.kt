@@ -229,10 +229,13 @@ fun LedgerApp(
 
     // Security Passcode Lock Screen Overlay
     if (!state.isUnlocked) {
+        val appPrefs = remember { com.example.data.AppPreferencesManager(context) }
         PasscodeLockScreen(
             onVerifyPin = { pin -> viewModel.verifyPasscode(pin) },
+            isBiometricEnabled = appPrefs.isBiometricEnabled,
+            onBiometricSuccess = { viewModel.unlockWithBiometric() },
             title = "Enter PIN",
-            subtitle = ""
+            subtitle = if (appPrefs.isBiometricEnabled) "Enter 4-digit PIN or use Biometric Unlock" else ""
         )
     } else {
         NavHost(
@@ -248,49 +251,24 @@ fun LedgerApp(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .navigationBarsPadding()
-                                .padding(bottom = 88.dp)
+                                .padding(
+                                    bottom = if (state.selectedCustomerWithBalance == null && !isRateItemSelectionMode) 94.dp else 22.dp,
+                                    start = 20.dp,
+                                    end = 20.dp
+                                )
                                 .zIndex(150f)
                         ) { data ->
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.95f),
-                                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                                    shadowElevation = 8.dp,
-                                    modifier = Modifier
-                                        .padding(horizontal = 24.dp)
-                                        .wrapContentWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(
-                                            text = data.visuals.message,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.inverseOnSurface,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-
-                                        data.visuals.actionLabel?.let { action ->
-                                            Text(
-                                                text = action,
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF34D399), // High-contrast Emerald Accent
-                                                modifier = Modifier
-                                                    .clickable { data.performAction() }
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                                com.example.ui.theme.UnifiedToastBanner(
+                                    message = data.visuals.message,
+                                    actionLabel = data.visuals.actionLabel,
+                                    onActionClick = if (data.visuals.actionLabel != null) {
+                                        { data.performAction() }
+                                    } else null
+                                )
                             }
                         }
                     },
@@ -425,6 +403,7 @@ fun LedgerApp(
                                         onDailyClosingClick = { viewModel.shareDailyClosing(context) },
                                         onOpenSettings = { selectedTab = 3 },
                                         onOpenNotes = { showNotesSheet = true },
+                                        onTogglePinCustomer = { id -> viewModel.togglePinCustomer(id) },
                                         onQuickEntryForCustomer = { custId, txnType ->
                                             preselectedCustomerIdForQuickEntry = custId
                                             quickEntryType = txnType
@@ -472,7 +451,10 @@ fun LedgerApp(
                                         onAddCategory = { cat -> viewModel.addRateCategory(cat) },
                                         onDeleteCategory = { cat -> viewModel.deleteRateCategory(cat) },
                                         onReorderCategories = { cats -> viewModel.setCategories(cats) },
-                                        onSetCategoryIcon = { cat, iconKey -> viewModel.setCategoryIcon(cat, iconKey) }
+                                        onSetCategoryIcon = { cat, iconKey -> viewModel.setCategoryIcon(cat, iconKey) },
+                                        onShowMessage = { msg -> viewModel.showUserMessage(msg) },
+                                        onImportBackupData = { jsonStr -> viewModel.importBackupData(jsonStr) {} },
+                                        onExportJson = { viewModel.getExportJson() }
                                     )
                                 }
                             }

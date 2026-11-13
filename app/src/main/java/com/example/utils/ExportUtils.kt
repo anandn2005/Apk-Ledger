@@ -103,7 +103,7 @@ object ExportUtils {
 
         // 4. RATE_ITEMS
         sb.append("\n# SECTION: RATE_ITEMS\n")
-        sb.append("id,name,category,unit,qty,buyRate,sellPrice,sellPriceStr,minSellPrice,maxSellPrice,lastUpdated\n")
+        sb.append("id,name,category,unit,qty,buyRate,sellPrice,sellPriceStr,minSellPrice,maxSellPrice,lastUpdated,hasMultipleVariants,variantsJson\n")
         rateItems.forEach { r ->
             sb.append(escapeCsv(r.id)).append(",")
             sb.append(escapeCsv(r.name)).append(",")
@@ -115,7 +115,9 @@ object ExportUtils {
             sb.append(escapeCsv(r.sellPriceStr)).append(",")
             sb.append(String.format(Locale.US, "%.2f", r.minSellPrice)).append(",")
             sb.append(String.format(Locale.US, "%.2f", r.maxSellPrice)).append(",")
-            sb.append(r.lastUpdated).append("\n")
+            sb.append(r.lastUpdated).append(",")
+            sb.append(r.hasMultipleVariants).append(",")
+            sb.append(escapeCsv(r.variantsJson)).append("\n")
         }
 
         return sb.toString()
@@ -229,6 +231,8 @@ object ExportUtils {
                                 val sellPrice = cols.getOrNull(6)?.toDoubleOrNull() ?: 0.0
                                 val sellPriceStr = cols.getOrNull(7) ?: ""
                                 val (minP, maxP) = RateItemEntity.computeMinMax(sellPrice, sellPriceStr)
+                                val hasVars = cols.getOrNull(11)?.toBooleanStrictOrNull() ?: false
+                                val varsJson = cols.getOrNull(12)?.takeIf { it.isNotBlank() } ?: "[]"
 
                                 rateItems.add(
                                     RateItemEntity(
@@ -242,6 +246,8 @@ object ExportUtils {
                                         sellPriceStr = sellPriceStr,
                                         minSellPrice = minP,
                                         maxSellPrice = maxP,
+                                        hasMultipleVariants = hasVars,
+                                        variantsJson = varsJson,
                                         lastUpdated = cols.getOrNull(10)?.toLongOrNull() ?: System.currentTimeMillis()
                                     )
                                 )
@@ -300,7 +306,9 @@ object ExportUtils {
     }
 
     fun createTempFile(context: Context, fileName: String, content: String): File {
-        val file = File(context.cacheDir, fileName)
+        val exportDir = File(context.cacheDir, "exports")
+        exportDir.mkdirs()
+        val file = File(exportDir, fileName)
         file.writeText(content)
         return file
     }
@@ -322,9 +330,32 @@ object ExportUtils {
         context.startActivity(Intent.createChooser(intent, title))
     }
 
+    /**
+     * Writes backup content (.json or .csv) to cacheDir/exports and launches a FileProvider share sheet.
+     */
+    fun shareBackupFile(
+        context: Context,
+        fileName: String,
+        content: String,
+        mimeType: String,
+        title: String = "Export Backup File"
+    ): Boolean {
+        return try {
+            val file = createTempFile(context, fileName, content)
+            shareFile(context, file, mimeType, title)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     fun writeContentToUri(context: Context, uri: Uri, content: String): Boolean {
         return try {
-            context.contentResolver.openOutputStream(uri)?.use { os ->
+            context.contentResolver.openOutputStream(uri, "wt")?.use { os ->
+                os.write(content.toByteArray(Charsets.UTF_8))
+                os.flush()
+            } ?: context.contentResolver.openOutputStream(uri)?.use { os ->
                 os.write(content.toByteArray(Charsets.UTF_8))
                 os.flush()
             }

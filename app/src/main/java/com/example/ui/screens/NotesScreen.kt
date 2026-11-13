@@ -768,45 +768,19 @@ fun NotesSheetScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                        .padding(horizontal = 20.dp, vertical = 20.dp)
                 ) {
-                    Surface(
-                        color = if (isDark) Color(0xFF2C2C2E) else Color(0xFF1F2937),
-                        shape = RoundedCornerShape(14.dp),
-                        shadowElevation = 8.dp
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = undoBannerMessage ?: "",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                            TextButton(
-                                onClick = {
-                                    AppHaptics.performConfirm(view)
-                                    val toRestore = undoDeletedNotes
-                                    undoBannerMessage = null
-                                    undoDeletedNotes = emptyList()
-                                    onRestoreNotes(toRestore)
-                                },
-                                modifier = Modifier.testTag("notes_undo_delete_button")
-                            ) {
-                                Text(
-                                    text = AppStrings.undo(lang),
-                                    color = Color(0xFF4ADE80),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-                    }
+                    com.example.ui.theme.UnifiedToastBanner(
+                        message = undoBannerMessage ?: "",
+                        actionLabel = AppStrings.undo(lang),
+                        onActionClick = {
+                            val toRestore = undoDeletedNotes
+                            undoBannerMessage = null
+                            undoDeletedNotes = emptyList()
+                            onRestoreNotes(toRestore)
+                        },
+                        modifier = Modifier.testTag("notes_undo_delete_button")
+                    )
                 }
             }
         }

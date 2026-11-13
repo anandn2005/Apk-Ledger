@@ -355,6 +355,7 @@ fun InvoicesScreen(
                         contentType = { inv -> "invoice_card_${inv.status}" }
                     ) { inv ->
                         val isSelected = selectedIds.contains(inv.id)
+                        val context = LocalContext.current
                         InvoiceCardItem(
                             invoice = inv,
                             currencySymbol = state.currencySymbol,
@@ -371,7 +372,33 @@ fun InvoicesScreen(
                             },
                             onEditClick = { editingInvoice = inv },
                             onPaymentClick = { selectedInvoiceForPayment = inv },
-                            onDeleteClick = { onDeleteInvoice(inv) }
+                            onDeleteClick = { onDeleteInvoice(inv) },
+                            onShareWhatsAppClick = {
+                                val customerPhone = customerPhoneMap[inv.customerName.lowercase()]
+                                val receiptData = ReceiptGenerator.createReceiptDataFromInvoice(
+                                    invoice = inv,
+                                    customerPhone = customerPhone,
+                                    businessName = state.businessName,
+                                    businessAddress = state.businessAddress,
+                                    businessPhone = state.businessPhone,
+                                    upiId = state.upiId,
+                                    currencySymbol = state.currencySymbol
+                                )
+                                ReceiptGenerator.generateAndShareReceipt(context, receiptData, preferWhatsApp = true)
+                            },
+                            onSharePdfClick = {
+                                val customerPhone = customerPhoneMap[inv.customerName.lowercase()]
+                                val receiptData = ReceiptGenerator.createReceiptDataFromInvoice(
+                                    invoice = inv,
+                                    customerPhone = customerPhone,
+                                    businessName = state.businessName,
+                                    businessAddress = state.businessAddress,
+                                    businessPhone = state.businessPhone,
+                                    upiId = state.upiId,
+                                    currencySymbol = state.currencySymbol
+                                )
+                                ReceiptGenerator.generateAndShareReceiptPdf(context, receiptData, preferWhatsApp = false)
+                            }
                         )
                     }
 
@@ -467,7 +494,9 @@ fun InvoiceCardItem(
     onLongClick: () -> Unit,
     onEditClick: () -> Unit = {},
     onPaymentClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onShareWhatsAppClick: () -> Unit = {},
+    onSharePdfClick: () -> Unit = {}
 ) {
     val isOverdue = invoice.dueDate < System.currentTimeMillis() && invoice.status != InvoiceEntity.STATUS_PAID
     val statusColor = when {
@@ -620,29 +649,63 @@ fun InvoiceCardItem(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        onClick = onShareWhatsAppClick,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF25D366).copy(alpha = 0.6f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share on WhatsApp",
+                            tint = Color(0xFF25D366),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("WhatsApp", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF25D366))
+                    }
+
+                    OutlinedButton(
+                        onClick = onSharePdfClick,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PictureAsPdf,
+                            contentDescription = "Share PDF",
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("PDF", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    }
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (invoice.status != InvoiceEntity.STATUS_PAID) {
                         Button(
                             onClick = onPaymentClick,
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = StatusEmeraldLight,
                                 contentColor = CreditGreenDark
                             )
                         ) {
-                            Text("Pay", fontWeight = FontWeight.Bold)
+                            Text("Pay", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
                         }
                     }
 
                     OutlinedButton(
                         onClick = onViewClick,
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
-                        Text("View", fontWeight = FontWeight.SemiBold)
+                        Text("View", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
                     }
                 }
             }

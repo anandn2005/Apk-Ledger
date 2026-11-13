@@ -1046,6 +1046,16 @@ fun CustomersScreen(
                     )
                 }
             } else {
+                val totalToCollect = remember(displayedCustomers) {
+                    displayedCustomers.filter { it.netBalance > 0.0 }.sumOf { it.netBalance }
+                }
+                val totalAdvance = remember(displayedCustomers) {
+                    displayedCustomers.filter { it.netBalance < 0.0 }.sumOf { Math.abs(it.netBalance) }
+                }
+                val owedCount = remember(displayedCustomers) {
+                    displayedCustomers.count { it.netBalance > 0.0 }
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1060,6 +1070,116 @@ fun CustomersScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         contentPadding = PaddingValues(top = 6.dp, bottom = 150.dp)
                     ) {
+                        // Interactive Portfolio Summary Banner (Tap to quick-filter Receivable vs Advance)
+                        item(key = "portfolio_summary_banner") {
+                            val isDarkSummary = com.example.ui.theme.LocalIsDarkMode.current
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isDarkSummary) Color(0xFF14181D) else Color(0xFFF8FAFC),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isDarkSummary) Color(0xFF262B33) else Color(0xFFE2E8F0)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Receivable (You'll Get)
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onFilterChange(if (state.customerFilter == "YOU_WILL_GET") "ALL" else "YOU_WILL_GET")
+                                            }
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "TO COLLECT ($owedCount)",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TextSecondary,
+                                            letterSpacing = 0.4.sp
+                                        )
+                                        Text(
+                                            text = Formatters.formatCurrency(totalToCollect, state.currencySymbol),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = DebitRed,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .width(1.dp)
+                                            .height(26.dp)
+                                            .background(if (isDarkSummary) Color(0xFF2C323B) else Color(0xFFE2E8F0))
+                                    )
+
+                                    // Advance / Payable (You'll Give)
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                onFilterChange(if (state.customerFilter == "YOU_WILL_GIVE") "ALL" else "YOU_WILL_GIVE")
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "ADVANCE / GOT",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = TextSecondary,
+                                            letterSpacing = 0.4.sp
+                                        )
+                                        Text(
+                                            text = Formatters.formatCurrency(totalAdvance, state.currencySymbol),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = CreditGreen,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    // Net Ledger Balance Pill
+                                    val netDiff = totalToCollect - totalAdvance
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (netDiff >= 0) DebitRed.copy(alpha = 0.10f) else CreditGreen.copy(alpha = 0.10f)
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.End,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Text(
+                                                text = "NET LEDGER",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (netDiff >= 0) DebitRed else CreditGreen
+                                            )
+                                            Text(
+                                                text = Formatters.formatCurrency(Math.abs(netDiff), state.currencySymbol),
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = if (netDiff >= 0) DebitRed else CreditGreen
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         items(
                             items = displayedCustomers,
                             key = { it.customer.id },
@@ -1075,6 +1195,7 @@ fun CustomersScreen(
                             val isPinned = state.pinnedCustomerIds.contains(item.customer.id)
                             
                             SwipeRevealRow(
+                                modifier = Modifier.animateItem(),
                                 onDelete = {
                                     onDeleteSelectedCustomers(setOf(item.customer.id))
                                 },
@@ -1094,6 +1215,10 @@ fun CustomersScreen(
                                         context.startActivity(android.content.Intent.createChooser(sendIntent, "Send Payment Reminder"))
                                     }
                                 } else null,
+                                onPin = {
+                                    onTogglePinCustomer(item.customer.id)
+                                },
+                                isPinned = isPinned,
                                 onQuickSale = if (onQuickEntryForCustomer != null) {
                                     { onQuickEntryForCustomer(item.customer.id, TransactionType.GAVE_CREDIT.name) }
                                 } else null,

@@ -102,6 +102,14 @@ class AppPreferencesManager(context: Context) {
         get() = prefs.getBoolean("auto_sync_enabled", true)
         set(value) = prefs.edit().putBoolean("auto_sync_enabled", value).apply()
 
+    var autoSyncFrequency: String
+        get() = prefs.getString("auto_sync_frequency", "Instant") ?: "Instant"
+        set(value) = prefs.edit().putString("auto_sync_frequency", value).apply()
+
+    var isBiometricEnabled: Boolean
+        get() = prefs.getBoolean("biometric_enabled", false)
+        set(value) = prefs.edit().putBoolean("biometric_enabled", value).apply()
+
     var isDarkMode: Boolean
         get() = prefs.getBoolean("is_dark_mode", false)
         set(value) = prefs.edit().putBoolean("is_dark_mode", value).apply()
@@ -154,6 +162,134 @@ class AppPreferencesManager(context: Context) {
 
     companion object {
         val defaultSystemUnits = listOf("Kg", "gm", "Ltr", "mL", "Pcs", "Pkt", "Box", "Carton", "Dozen", "Bora", "Tin", "Meter")
+        private const val HASH_PREFIX = "sha256:"
+    }
+
+    // ============================================================
+    // SALTED SHA-256 PASSCODE HASHING & VERIFICATION
+    // ============================================================
+
+    val hasPasscodeConfigured: Boolean
+        get() = passcodePin.isNotBlank()
+
+    fun setHashedPasscode(rawPin: String) {
+        if (rawPin.isBlank()) {
+            passcodePin = ""
+            return
+        }
+        val saltBytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(saltBytes)
+        val saltHex = saltBytes.joinToString("") { "%02x".format(it) }
+        val digestHex = computeSha256(rawPin.trim(), saltHex)
+        passcodePin = "$HASH_PREFIX$saltHex:$digestHex"
+    }
+
+    fun verifyPasscodePin(inputPin: String): Boolean {
+        val stored = passcodePin
+        if (stored.isBlank()) return false
+        val cleanInput = inputPin.trim()
+        if (stored.startsWith(HASH_PREFIX)) {
+            val parts = stored.removePrefix(HASH_PREFIX).split(":")
+            if (parts.size != 2) return false
+            val saltHex = parts[0]
+            val expectedHash = parts[1]
+            val actualHash = computeSha256(cleanInput, saltHex)
+            return java.security.MessageDigest.isEqual(
+                expectedHash.toByteArray(Charsets.UTF_8),
+                actualHash.toByteArray(Charsets.UTF_8)
+            )
+        } else {
+            // Legacy plaintext PIN check + automatic transparent upgrade to salted SHA-256
+            val matched = cleanInput == stored.trim()
+            if (matched) {
+                setHashedPasscode(cleanInput)
+            }
+            return matched
+        }
+    }
+
+    private fun computeSha256(pin: String, saltHex: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update(saltHex.toByteArray(Charsets.UTF_8))
+        val digest = md.digest(pin.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    // ============================================================
+    // DELTA SYNC WATERMARKS & DIRTY RECORD QUEUE
+    // ============================================================
+
+    @Synchronized
+    fun getCollectionWatermark(collection: String): Long {
+        return prefs.getLong("delta_watermark_$collection", 0L)
+    }
+
+    @Synchronized
+    fun setCollectionWatermark(collection: String, timestamp: Long) {
+        val current = getCollectionWatermark(collection)
+        if (timestamp > current) {
+            prefs.edit().putLong("delta_watermark_$collection", timestamp).apply()
+        }
+    }
+
+    @Synchronized
+    fun resetAllSyncWatermarks() {
+        prefs.edit()
+            .remove("delta_watermark_customers")
+            .remove("delta_watermark_transactions")
+            .remove("delta_watermark_rate_items")
+            .remove("delta_watermark_invoices")
+            .remove("delta_watermark_notes")
+            .remove("dirty_sync_records")
+            .apply()
+    }
+
+    @Synchronized
+    fun markRecordDirty(collection: String, id: String) {
+        if (id.isBlank()) return
+        val current = (prefs.getStringSet("dirty_sync_records", emptySet()) ?: emptySet()).toMutableSet()
+        current.add("$collection:$id")
+        prefs.edit().putStringSet("dirty_sync_records", current).apply()
+    }
+
+    @Synchronized
+    fun clearRecordDirty(collection: String, id: String) {
+        if (id.isBlank()) return
+        val current = (prefs.getStringSet("dirty_sync_records", emptySet()) ?: emptySet()).toMutableSet()
+        if (current.remove("$collection:$id")) {
+            prefs.edit().putStringSet("dirty_sync_records", current).apply()
+        }
+    }
+
+    @Synchronized
+    fun clearCollectionDirty(collection: String, ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        val current = (prefs.getStringSet("dirty_sync_records", emptySet()) ?: emptySet()).toMutableSet()
+        var modified = false
+        for (id in ids) {
+            if (current.remove("$collection:$id")) {
+                modified = true
+            }
+        }
+        if (modified) {
+            prefs.edit().putStringSet("dirty_sync_records", current).apply()
+        }
+    }
+
+    @Synchronized
+    fun getDirtyRecordIds(collection: String): Set<String> {
+        val prefix = "$collection:"
+        val allDirty = prefs.getStringSet("dirty_sync_records", emptySet()) ?: emptySet()
+        return allDirty.asSequence()
+            .filter { it.startsWith(prefix) }
+            .map { it.removePrefix(prefix) }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    @Synchronized
+    fun getTotalDirtyRecordCount(): Int {
+        return (prefs.getStringSet("dirty_sync_records", emptySet()) ?: emptySet()).size
     }
 
     fun getCategoryIconKey(category: String): String {

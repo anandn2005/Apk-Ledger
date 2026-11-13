@@ -1173,7 +1173,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun verifyPasscode(pin: String): Boolean {
         if (_isLockedOut.value) return false
 
-        return if (pin == prefs.passcodePin) {
+        return if (prefs.verifyPasscodePin(pin)) {
             prefs.isUnlocked = true
             _isUnlocked.value = true
             _failedPinAttempts.value = 0
@@ -1191,8 +1191,19 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun unlockWithBiometric() {
+        prefs.isUnlocked = true
+        _isUnlocked.value = true
+        _failedPinAttempts.value = 0
+        _isLockedOut.value = false
+    }
+
     fun setPasscode(pin: String, enable: Boolean) {
-        prefs.passcodePin = pin
+        if (enable && pin.isNotBlank()) {
+            prefs.setHashedPasscode(pin)
+        } else if (!enable) {
+            prefs.setHashedPasscode("")
+        }
         prefs.isPasscodeEnabled = enable
         prefs.isUnlocked = true
         _isUnlocked.value = true
@@ -1233,6 +1244,10 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearUserMessage() {
         _userMessage.value = null
+    }
+
+    fun showUserMessage(message: String) {
+        _userMessage.value = message
     }
 
     suspend fun getExportJson(): String {

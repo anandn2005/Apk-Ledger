@@ -919,10 +919,32 @@ class LedgerRepository(
                 obj.put("sellPrice", r.sellPrice)
                 obj.put("sellPriceStr", r.sellPriceStr)
                 obj.put("priceHistoryJson", r.priceHistoryJson)
+                obj.put("hasMultipleVariants", r.hasMultipleVariants)
+                obj.put("variantsJson", r.variantsJson)
                 obj.put("lastUpdated", r.lastUpdated)
                 rateArray.put(obj)
             }
             root.put("rateItems", rateArray)
+
+            val notesList = try { dao.getAllNotesList() } catch (_: Exception) { emptyList() }
+            val notesArray = JSONArray()
+            notesList.forEach { n ->
+                val obj = JSONObject()
+                obj.put("id", n.id)
+                obj.put("text", n.text)
+                obj.put("label", n.label)
+                obj.put("isChecklist", n.isChecklist)
+                obj.put("checklistJson", n.checklistJson)
+                obj.put("isPinned", n.isPinned)
+                obj.put("isDone", n.isDone)
+                obj.put("linkedCustomerId", n.linkedCustomerId)
+                obj.put("linkedCustomerName", n.linkedCustomerName)
+                obj.put("reminderTime", n.reminderTime)
+                obj.put("createdAt", n.createdAt)
+                obj.put("updatedAt", n.updatedAt)
+                notesArray.put(obj)
+            }
+            root.put("notes", notesArray)
 
             root.toString(2)
         }
@@ -1036,6 +1058,8 @@ class LedgerRepository(
                         val sellPrice = obj.optDouble("sellPrice", 0.0)
                         val sellPriceStr = obj.optString("sellPriceStr", "")
                         val buyRate = obj.optDouble("buyRate", 0.0)
+                        val hasVars = obj.optBoolean("hasMultipleVariants", false)
+                        val varsJson = obj.optString("variantsJson", "[]")
                         val (minP, maxP) = RateItemEntity.computeMinMax(sellPrice, sellPriceStr)
                         val existing = rateIdMap[id] ?: rateNameMap[name.trim().lowercase(java.util.Locale.getDefault())]
 
@@ -1059,6 +1083,8 @@ class LedgerRepository(
                                 minSellPrice = minP,
                                 maxSellPrice = maxP,
                                 priceHistoryJson = updatedHistoryJson,
+                                hasMultipleVariants = hasVars || existing.hasMultipleVariants,
+                                variantsJson = if (varsJson != "[]" && varsJson.isNotBlank()) varsJson else existing.variantsJson,
                                 lastUpdated = now
                             )
                             dao.updateRateItem(mergedItem)
@@ -1091,6 +1117,8 @@ class LedgerRepository(
                                 minSellPrice = minP,
                                 maxSellPrice = maxP,
                                 priceHistoryJson = initialHistoryJson,
+                                hasMultipleVariants = hasVars,
+                                variantsJson = varsJson,
                                 lastUpdated = now
                             )
                             dao.insertRateItem(newItem)
@@ -1104,6 +1132,34 @@ class LedgerRepository(
                                 )
                             )
                         }
+                    }
+                }
+
+                if (root.has("notes")) {
+                    val notesArray = root.getJSONArray("notes")
+                    val incomingNotes = mutableListOf<NoteEntity>()
+                    for (i in 0 until notesArray.length()) {
+                        val obj = notesArray.getJSONObject(i)
+                        val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                        incomingNotes.add(
+                            NoteEntity(
+                                id = id,
+                                text = obj.optString("text", ""),
+                                label = obj.optString("label", NoteEntity.LABEL_GENERAL),
+                                isChecklist = obj.optBoolean("isChecklist", false),
+                                checklistJson = obj.optString("checklistJson", "[]"),
+                                isPinned = obj.optBoolean("isPinned", false),
+                                isDone = obj.optBoolean("isDone", false),
+                                linkedCustomerId = obj.optString("linkedCustomerId", ""),
+                                linkedCustomerName = obj.optString("linkedCustomerName", ""),
+                                reminderTime = obj.optLong("reminderTime", 0L),
+                                createdAt = obj.optLong("createdAt", now),
+                                updatedAt = obj.optLong("updatedAt", now)
+                            )
+                        )
+                    }
+                    if (incomingNotes.isNotEmpty()) {
+                        dao.insertNotes(incomingNotes)
                     }
                 }
 

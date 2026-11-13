@@ -1497,7 +1497,7 @@ fun ItemRateListScreen(
                         }
                     }
 
-                    // Pin / Unpin Bottom Message with Undo Button
+                    // Pin / Unpin Bottom Message with Undo Button (Unified Toast Design)
                     androidx.compose.animation.AnimatedVisibility(
                         visible = pinUndoBanner != null,
                         enter = slideInVertically(
@@ -1513,61 +1513,23 @@ fun ItemRateListScreen(
                             .zIndex(110f)
                             .navigationBarsPadding()
                             .padding(
-                                start = 16.dp,
-                                end = 16.dp,
-                                bottom = if (hasActiveCart) 84.dp else 18.dp
+                                start = 20.dp,
+                                end = 20.dp,
+                                bottom = if (hasActiveCart) 90.dp else 94.dp
                             )
                     ) {
                         val currentBanner = pinUndoBanner
                         if (currentBanner != null) {
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (isAppInDarkTheme()) Color(0xFF1F2937) else Color(0xFF1C1C1E),
-                                shadowElevation = 6.dp,
-                                modifier = Modifier
-                                    .widthIn(min = 220.dp, max = 380.dp)
-                                    .testTag("pin_undo_snackbar")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.PushPin,
-                                        contentDescription = null,
-                                        tint = Color(0xFF34D399),
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .graphicsLayer { rotationZ = 35f }
-                                    )
-                                    Text(
-                                        text = currentBanner.message,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = Color.White,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    TextButton(
-                                        onClick = {
-                                            AppHaptics.performTap(view)
-                                            viewModel.setPinnedRateItemsOrder(currentBanner.previousPinnedIds)
-                                            pinUndoBanner = null
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                        modifier = Modifier
-                                            .height(30.dp)
-                                            .testTag("pin_undo_button")
-                                    ) {
-                                        Text(
-                                            text = AppStrings.undo(state.selectedLanguage),
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF34D399)
-                                        )
-                                    }
-                                }
-                            }
+                            com.example.ui.theme.UnifiedToastBanner(
+                                message = currentBanner.message,
+                                actionLabel = AppStrings.undo(state.selectedLanguage),
+                                onActionClick = {
+                                    viewModel.setPinnedRateItemsOrder(currentBanner.previousPinnedIds)
+                                    pinUndoBanner = null
+                                },
+                                leadingIcon = Icons.Default.PushPin,
+                                modifier = Modifier.testTag("pin_undo_snackbar")
+                            )
                         }
                     }
                 }
@@ -2523,10 +2485,16 @@ fun QuickUpdateRateDialog(
     var selectedVariantId by remember(item) { mutableStateOf(variants.firstOrNull()?.id ?: "") }
     val currentVariant = variants.find { it.id == selectedVariantId } ?: variants.firstOrNull()
 
+    fun formatCleanDecimal(value: Double): String {
+        if (value <= 0.0) return ""
+        return if (value % 1.0 == 0.0) value.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
+
     var buyRateStr by remember(currentVariant) {
         mutableStateOf(
-            if (currentVariant != null) (if (currentVariant.buyRate > 0) currentVariant.buyRate.toString() else "")
-            else (if (item.buyRate > 0) item.buyRate.toString() else "")
+            if (currentVariant != null) formatCleanDecimal(currentVariant.buyRate)
+            else formatCleanDecimal(item.buyRate)
         )
     }
     var sellPriceStr by remember(currentVariant) {
@@ -2580,7 +2548,7 @@ fun QuickUpdateRateDialog(
                                     .clip(RoundedCornerShape(10.dp))
                                     .clickable {
                                         selectedVariantId = v.id
-                                        buyRateStr = if (v.buyRate > 0) v.buyRate.toString() else ""
+                                        buyRateStr = formatCleanDecimal(v.buyRate)
                                         sellPriceStr = v.getDisplaySellPrice()
                                     }
                             ) {
@@ -2600,8 +2568,9 @@ fun QuickUpdateRateDialog(
                     value = buyRateStr,
                     onValueChange = { buyRateStr = it },
                     label = { Text("New Buy Cost ($currencySymbol)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface)
                 )
@@ -2610,24 +2579,68 @@ fun QuickUpdateRateDialog(
                     value = sellPriceStr,
                     onValueChange = { sellPriceStr = it },
                     label = { Text("New Selling Price ($currencySymbol)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = MaterialTheme.colorScheme.onSurface, unfocusedTextColor = MaterialTheme.colorScheme.onSurface)
                 )
+
+                // Quick Markup Chips (+5%, +10%, +15%, +20%, +25%)
+                val currentBuyVal = buyRateStr.toDoubleOrNull() ?: 0.0
+                if (currentBuyVal > 0) {
+                    val activeQty = (currentVariant?.qty ?: item.qty).coerceAtLeast(1.0)
+                    val unitBuyCost = currentBuyVal / activeQty
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Quick Markup on Buy Cost:",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            listOf(5, 10, 15, 20, 25).forEach { pct ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            val calcSell = unitBuyCost * (1.0 + pct / 100.0)
+                                            sellPriceStr = formatCleanDecimal(calcSell)
+                                        }
+                                ) {
+                                    Text(
+                                        text = "+$pct%",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                enabled = !isSubmitting,
+                enabled = !isSubmitting && (buyRateStr.isNotBlank() || sellPriceStr.isNotBlank()),
                 onClick = {
                     if (!isSubmitting) {
                         isSubmitting = true
                         val buy = buyRateStr.toDoubleOrNull() ?: 0.0
                         if (item.hasVariants() && currentVariant != null) {
-                            onSaveVariantRate(currentVariant.id, buy, sellPriceStr)
+                            onSaveVariantRate(currentVariant.id, buy, sellPriceStr.trim())
                         } else {
-                            onSave(buy, sellPriceStr)
+                            onSave(buy, sellPriceStr.trim())
                         }
                     }
                 },
@@ -3361,15 +3374,145 @@ fun AddEditItemSheet(
             // ============================================================
             if (!hasMultipleVariants) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "PRICING & COST",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        letterSpacing = 0.5.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "PRICING & COST",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.5.sp
+                        )
 
-                    // Row 1: Selling Price Input (~70%) + Vertical Scroll Wheel Unit Picker (~30%)
+                        // Toggle between Standard Pricing and MRP & Discount % Calculator
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Surface(
+                                    onClick = { isDiscountMode = false },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (!isDiscountMode) MaterialTheme.colorScheme.primary else Color.Transparent
+                                ) {
+                                    Text(
+                                        text = "Standard",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (!isDiscountMode) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                                Surface(
+                                    onClick = { isDiscountMode = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isDiscountMode) MaterialTheme.colorScheme.primary else Color.Transparent
+                                ) {
+                                    Text(
+                                        text = "MRP % Mode",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isDiscountMode) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Optional MRP & Discount % Calculator Card
+                    AnimatedVisibility(visible = isDiscountMode) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.07f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "MRP & Discount Calculator (Auto-fills Buy & Sell)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = mrpStr,
+                                        onValueChange = { newMrp ->
+                                            mrpStr = newMrp
+                                            val mrpVal = newMrp.toDoubleOrNull() ?: 0.0
+                                            if (mrpVal > 0) {
+                                                val bDisc = buyDiscountStr.toDoubleOrNull() ?: 0.0
+                                                val sDisc = sellDiscountStr.toDoubleOrNull() ?: 0.0
+                                                val calcUnitBuy = mrpVal * (1.0 - bDisc / 100.0)
+                                                val calcSell = mrpVal * (1.0 - sDisc / 100.0)
+                                                unitBuyStr = formatAutoCalc(calcUnitBuy)
+                                                val q = (qtyStr.toDoubleOrNull() ?: 1.0).coerceAtLeast(0.0001)
+                                                totalBuyStr = formatAutoCalc(calcUnitBuy * q)
+                                                sellPriceStr = formatAutoCalc(calcSell)
+                                            }
+                                        },
+                                        label = { Text("MRP ($currencySymbol)", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = buyDiscountStr,
+                                        onValueChange = { newBDisc ->
+                                            buyDiscountStr = newBDisc
+                                            val mrpVal = mrpStr.toDoubleOrNull() ?: 0.0
+                                            val bDisc = newBDisc.toDoubleOrNull() ?: 0.0
+                                            if (mrpVal > 0) {
+                                                val calcUnitBuy = mrpVal * (1.0 - bDisc / 100.0)
+                                                unitBuyStr = formatAutoCalc(calcUnitBuy)
+                                                val q = (qtyStr.toDoubleOrNull() ?: 1.0).coerceAtLeast(0.0001)
+                                                totalBuyStr = formatAutoCalc(calcUnitBuy * q)
+                                            }
+                                        },
+                                        label = { Text("Buy Disc %", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = sellDiscountStr,
+                                        onValueChange = { newSDisc ->
+                                            sellDiscountStr = newSDisc
+                                            val mrpVal = mrpStr.toDoubleOrNull() ?: 0.0
+                                            val sDisc = newSDisc.toDoubleOrNull() ?: 0.0
+                                            if (mrpVal > 0) {
+                                                val calcSell = mrpVal * (1.0 - sDisc / 100.0)
+                                                sellPriceStr = formatAutoCalc(calcSell)
+                                            }
+                                        },
+                                        label = { Text("Sell Disc %", fontSize = 11.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Row 1: Selling Price Input + Stock Quantity Input (Aligned Labels & Prefix)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -3381,7 +3524,7 @@ fun AddEditItemSheet(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "Selling Price ($currencySymbol per $unit)",
+                                text = "Selling Price ($currencySymbol/$unit)",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -3392,28 +3535,28 @@ fun AddEditItemSheet(
                             OutlinedTextField(
                                 value = sellPriceStr,
                                 onValueChange = {
-                                    sellPriceStr = it
+                                    sellPriceStr = it.replace("₹", "").replace("$", "")
                                     if (showValidationErrors && it.isNotBlank()) showValidationErrors = false
                                 },
                                 placeholder = { Text("0.00", style = MaterialTheme.typography.bodyMedium) },
                                 singleLine = true,
-                                leadingIcon = {
+                                prefix = {
                                     Text(
-                                        text = currencySymbol,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 16.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.padding(start = 12.dp, end = 2.dp)
+                                        text = "$currencySymbol ",
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 },
                                 shape = RoundedCornerShape(12.dp),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                                 keyboardActions = KeyboardActions(onNext = { qtyFocusRequester.requestFocus() }),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3424,7 +3567,7 @@ fun AddEditItemSheet(
 
                         // Stock Quantity Field (#7 grouped with Unit)
                         Column(
-                            modifier = Modifier.width(108.dp),
+                            modifier = Modifier.width(114.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
@@ -3432,7 +3575,8 @@ fun AddEditItemSheet(
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
 
                             OutlinedTextField(
@@ -3460,7 +3604,9 @@ fun AddEditItemSheet(
                                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3546,9 +3692,16 @@ fun AddEditItemSheet(
                                         totalBuyStr = ""
                                     }
                                 },
-                                label = { Text("Cost per $unit ($currencySymbol)", fontSize = 11.sp) },
-                                placeholder = { Text("0") },
+                                label = { Text("Buy / $unit ($currencySymbol)", fontSize = 11.5.sp, maxLines = 1) },
+                                placeholder = { Text("0.00") },
                                 singleLine = true,
+                                prefix = {
+                                    Text(
+                                        text = "$currencySymbol ",
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next),
                                 keyboardActions = KeyboardActions(onNext = { totalBuyFocusRequester.requestFocus() }),
@@ -3556,7 +3709,9 @@ fun AddEditItemSheet(
                                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
@@ -3577,22 +3732,70 @@ fun AddEditItemSheet(
                                         unitBuyStr = ""
                                     }
                                 },
-                                label = { Text("Total Purchase Cost ($currencySymbol)", fontSize = 11.sp) },
-                                placeholder = { Text("0") },
+                                label = { Text("Total Cost ($currencySymbol)", fontSize = 11.5.sp, maxLines = 1) },
+                                placeholder = { Text("0.00") },
                                 singleLine = true,
+                                prefix = {
+                                    Text(
+                                        text = "$currencySymbol ",
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
+                                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
                                     .focusRequester(totalBuyFocusRequester)
                                     .testTag("rate_item_buy_rate_input")
                             )
+                        }
+
+                        // Quick Markup Chips when Unit Buy Cost is entered
+                        if (parsedUnitBuy > 0) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Markup:",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                listOf(5, 10, 15, 20, 25).forEach { pct ->
+                                    Surface(
+                                        onClick = {
+                                            val calcSell = parsedUnitBuy * (1.0 + pct / 100.0)
+                                            sellPriceStr = formatAutoCalc(calcSell)
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "+$pct%",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -3672,181 +3875,234 @@ fun AddEditItemSheet(
                     }
 
                     variants.forEachIndexed { vIndex, v ->
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                        key(v.id) {
+                            // Local text states per variant so decimal points (".") and empty text can be typed smoothly without cursor jumping
+                            var vQtyText by remember(v.id) {
+                                mutableStateOf(
+                                    if (v.qty % 1.0 == 0.0) v.qty.toLong().toString() else formatAutoCalc(v.qty)
+                                )
+                            }
+                            var vUnitBuyText by remember(v.id) {
+                                val initUnitBuy = if (v.qty > 0) v.buyRate / v.qty else v.buyRate
+                                mutableStateOf(if (initUnitBuy > 0) formatAutoCalc(initUnitBuy) else "")
+                            }
+                            var vTotalBuyText by remember(v.id) {
+                                mutableStateOf(if (v.buyRate > 0) formatAutoCalc(v.buyRate) else "")
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                // Variant Header Row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
+                                    // Variant Header Row
                                     Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = MaterialTheme.colorScheme.primary
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary
+                                            ) {
+                                                Text(
+                                                    text = "${vIndex + 1}",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
                                             Text(
-                                                text = "${vIndex + 1}",
-                                                fontSize = 11.sp,
+                                                text = if (v.label.isNotBlank()) v.label else "Size / Variant Block",
+                                                style = MaterialTheme.typography.labelMedium,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color.White,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                color = MaterialTheme.colorScheme.primary
                                             )
                                         }
-                                        Text(
-                                            text = "Size / Variant Block",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary
+
+                                        if (variants.size > 1) {
+                                            IconButton(
+                                                onClick = { variants.removeAt(vIndex) },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Remove Variant",
+                                                    tint = DebitRed,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Row 1: Variant Label (Free text) + Selling Price
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = v.label,
+                                            onValueChange = { newLabel ->
+                                                variants[vIndex] = variants[vIndex].copy(label = newLabel)
+                                            },
+                                            label = { Text("Size Label (e.g. 500g)") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1.1f)
+                                                .testTag("variant_label_input_$vIndex")
+                                        )
+
+                                        OutlinedTextField(
+                                            value = v.sellPriceStr,
+                                            onValueChange = { newSell ->
+                                                val cleanSell = newSell.replace("₹", "").replace("$", "").trim()
+                                                val sellNum = cleanSell.toDoubleOrNull() ?: 0.0
+                                                variants[vIndex] = variants[vIndex].copy(sellPrice = sellNum, sellPriceStr = cleanSell)
+                                            },
+                                            label = { Text("Sell ($currencySymbol)") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(10.dp),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier
+                                                .weight(0.9f)
+                                                .testTag("variant_sell_price_input_$vIndex")
                                         )
                                     }
 
-                                    if (variants.size > 1) {
-                                        IconButton(
-                                            onClick = { variants.removeAt(vIndex) },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Remove Variant",
-                                                tint = DebitRed,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
+                                    // Row 2: Purchase & Inventory Cost inline row (Qty | Buy/Unit | Total Buy) for variant
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = vQtyText,
+                                            onValueChange = { newQtyStr ->
+                                                vQtyText = newQtyStr
+                                                val parsedQ = newQtyStr.toDoubleOrNull()
+                                                if (parsedQ != null && parsedQ > 0.0) {
+                                                    val unitVal = vUnitBuyText.toDoubleOrNull()
+                                                    val totalVal = vTotalBuyText.toDoubleOrNull()
+                                                    val newTotal = when {
+                                                        unitVal != null && unitVal > 0.0 -> {
+                                                            vTotalBuyText = formatAutoCalc(unitVal * parsedQ)
+                                                            unitVal * parsedQ
+                                                        }
+                                                        totalVal != null && totalVal > 0.0 -> {
+                                                            vUnitBuyText = formatAutoCalc(totalVal / parsedQ)
+                                                            totalVal
+                                                        }
+                                                        else -> variants[vIndex].buyRate
+                                                    }
+                                                    variants[vIndex] = variants[vIndex].copy(qty = parsedQ, buyRate = newTotal)
+                                                }
+                                            },
+                                            label = { Text("Qty", fontSize = 11.sp) },
+                                            placeholder = { Text("1") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(10.dp),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.weight(0.8f)
+                                        )
+
+                                        OutlinedTextField(
+                                            value = vUnitBuyText,
+                                            onValueChange = { newBuyStr ->
+                                                vUnitBuyText = newBuyStr
+                                                val parsedBuy = newBuyStr.toDoubleOrNull()
+                                                val activeQ = (vQtyText.toDoubleOrNull() ?: variants[vIndex].qty).coerceAtLeast(0.0001)
+                                                if (parsedBuy != null && parsedBuy >= 0.0) {
+                                                    val total = parsedBuy * activeQ
+                                                    vTotalBuyText = if (total > 0) formatAutoCalc(total) else ""
+                                                    variants[vIndex] = variants[vIndex].copy(qty = activeQ, buyRate = total)
+                                                } else if (newBuyStr.isBlank()) {
+                                                    vTotalBuyText = ""
+                                                    variants[vIndex] = variants[vIndex].copy(buyRate = 0.0)
+                                                }
+                                            },
+                                            label = { Text("Buy/Unit ($currencySymbol)", fontSize = 11.sp) },
+                                            placeholder = { Text("0.00") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(10.dp),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.weight(1.1f)
+                                        )
+
+                                        OutlinedTextField(
+                                            value = vTotalBuyText,
+                                            onValueChange = { newTotalStr ->
+                                                vTotalBuyText = newTotalStr
+                                                val parsedTotal = newTotalStr.toDoubleOrNull()
+                                                val activeQ = (vQtyText.toDoubleOrNull() ?: variants[vIndex].qty).coerceAtLeast(0.0001)
+                                                if (parsedTotal != null && parsedTotal >= 0.0) {
+                                                    val unitCost = parsedTotal / activeQ
+                                                    vUnitBuyText = if (unitCost > 0) formatAutoCalc(unitCost) else ""
+                                                    variants[vIndex] = variants[vIndex].copy(qty = activeQ, buyRate = parsedTotal)
+                                                } else if (newTotalStr.isBlank()) {
+                                                    vUnitBuyText = ""
+                                                    variants[vIndex] = variants[vIndex].copy(buyRate = 0.0)
+                                                }
+                                            },
+                                            label = { Text("Total Buy ($currencySymbol)", fontSize = 11.sp) },
+                                            placeholder = { Text("0.00") },
+                                            singleLine = true,
+                                            shape = RoundedCornerShape(10.dp),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            modifier = Modifier.weight(1.1f)
+                                        )
                                     }
-                                }
-
-                                // Row 1: Variant Label (Free text) + Selling Price
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = v.label,
-                                        onValueChange = { newLabel ->
-                                            variants[vIndex] = v.copy(label = newLabel)
-                                        },
-                                        label = { Text("Size Label") },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1.1f)
-                                            .testTag("variant_label_input_$vIndex")
-                                    )
-
-                                    OutlinedTextField(
-                                        value = v.sellPriceStr,
-                                        onValueChange = { newSell ->
-                                            val cleanSell = newSell.replace("₹", "").replace("$", "").trim()
-                                            val sellNum = cleanSell.toDoubleOrNull() ?: 0.0
-                                            variants[vIndex] = v.copy(sellPrice = sellNum, sellPriceStr = cleanSell)
-                                        },
-                                        label = { Text("Sell ($currencySymbol)") },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(10.dp),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier
-                                            .weight(0.9f)
-                                            .testTag("variant_sell_price_input_$vIndex")
-                                    )
-                                }
-
-                                // Row 2: Purchase & Inventory Cost inline row (Qty | Buy | Total Buy) for variant
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    val vQtyStr = if (v.qty % 1.0 == 0.0) v.qty.toLong().toString() else v.qty.toString()
-                                    val vTotalBuy = v.buyRate
-                                    val vUnitBuy = if (v.qty > 0) vTotalBuy / v.qty else vTotalBuy
-                                    val vUnitBuyStr = if (vUnitBuy > 0) formatAutoCalc(vUnitBuy) else ""
-                                    val vTotalBuyStr = if (vTotalBuy > 0) formatAutoCalc(vTotalBuy) else ""
-
-                                    OutlinedTextField(
-                                        value = vQtyStr,
-                                        onValueChange = { newQtyStr ->
-                                            val parsedQ = (newQtyStr.toDoubleOrNull() ?: 1.0).coerceAtLeast(0.0001)
-                                            variants[vIndex] = v.copy(qty = parsedQ)
-                                        },
-                                        label = { Text("Qty", fontSize = 11.sp) },
-                                        placeholder = { Text("1") },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(10.dp),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier.weight(0.8f)
-                                    )
-
-                                    OutlinedTextField(
-                                        value = vUnitBuyStr,
-                                        onValueChange = { newBuyStr ->
-                                            val parsedBuy = newBuyStr.toDoubleOrNull() ?: 0.0
-                                            val total = parsedBuy * v.qty
-                                            variants[vIndex] = v.copy(buyRate = total)
-                                        },
-                                        label = { Text("Buy ($currencySymbol/Unit)", fontSize = 11.sp) },
-                                        placeholder = { Text("0.00") },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(10.dp),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier.weight(1.1f)
-                                    )
-
-                                    OutlinedTextField(
-                                        value = vTotalBuyStr,
-                                        onValueChange = { newTotalStr ->
-                                            val parsedTotal = newTotalStr.toDoubleOrNull() ?: 0.0
-                                            variants[vIndex] = v.copy(buyRate = parsedTotal)
-                                        },
-                                        label = { Text("Total Buy ($currencySymbol)", fontSize = 11.sp) },
-                                        placeholder = { Text("0.00") },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(10.dp),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
-                                        ),
-                                        modifier = Modifier.weight(1.1f)
-                                    )
                                 }
                             }
                         }
@@ -3884,8 +4140,14 @@ fun AddEditItemSheet(
             // SECTION 4: BOTTOM ACTION BAR + INLINE DISABLED REASON (#37)
             // ============================================================
             if (!isFormValid) {
+                val invalidReason = when {
+                    name.trim().isBlank() -> "Enter an item name to enable Save"
+                    isDuplicate -> "An item named '${name.trim()}' already exists in $category"
+                    hasMultipleVariants && variants.isEmpty() -> "Add at least one size / variant to save"
+                    else -> "Please complete required fields to save"
+                }
                 Text(
-                    text = if (name.isBlank()) "Enter an item name to enable Save" else "Enter a valid selling price",
+                    text = invalidReason,
                     style = MaterialTheme.typography.labelSmall,
                     color = DebitRed,
                     fontWeight = FontWeight.Medium,
@@ -4725,18 +4987,27 @@ fun HistoricalPriceRecordDialog(
     var selectedVariantId by remember(variants) { mutableStateOf(variants.firstOrNull()?.id ?: "") }
     val currentVariant = remember(selectedVariantId, variants) { variants.find { it.id == selectedVariantId } ?: variants.firstOrNull() }
 
-    var buyStr by remember(currentVariant) {
+    fun formatCleanHistRate(value: Double): String {
+        if (value <= 0.0) return ""
+        return if (value % 1.0 == 0.0) value.toLong().toString()
+        else String.format(java.util.Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+    }
+
+    val isEditingHistoryPoint = title.contains("Edit", ignoreCase = true)
+    var buyStr by remember(currentVariant, isEditingHistoryPoint, initialBuyRate) {
         mutableStateOf(
-            if (currentVariant != null) (if (currentVariant.buyRate > 0) currentVariant.buyRate.toString() else "")
-            else (if (initialBuyRate > 0) initialBuyRate.toString() else "")
+            if (isEditingHistoryPoint && initialBuyRate > 0) formatCleanHistRate(initialBuyRate)
+            else if (currentVariant != null && currentVariant.buyRate > 0) formatCleanHistRate(currentVariant.buyRate)
+            else formatCleanHistRate(initialBuyRate)
         )
     }
-    var sellStr by remember(currentVariant) {
+    var sellStr by remember(currentVariant, isEditingHistoryPoint, initialSellPriceStr) {
         mutableStateOf(
-            currentVariant?.getDisplaySellPrice() ?: initialSellPriceStr
+            if (isEditingHistoryPoint && initialSellPriceStr.isNotBlank()) initialSellPriceStr
+            else currentVariant?.getDisplaySellPrice() ?: initialSellPriceStr
         )
     }
-    var selectedTimestamp by remember { mutableLongStateOf(initialTimestamp) }
+    var selectedTimestamp by remember(initialTimestamp) { mutableLongStateOf(initialTimestamp) }
     var isSubmitting by remember { mutableStateOf(false) }
 
     var isVisible by remember { mutableStateOf(false) }

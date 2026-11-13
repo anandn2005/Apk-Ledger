@@ -309,19 +309,20 @@ object ReceiptGenerator {
 
     /**
      * Export & Share action: Generates high quality bitmap, saves to cache,
-     * and opens the native Android ACTION_SEND share sheet.
+     * and opens the native Android ACTION_SEND share sheet (or targets WhatsApp when preferWhatsApp=true).
      */
-    fun generateAndShareReceipt(context: Context, receipt: ReceiptData) {
+    fun generateAndShareReceipt(context: Context, receipt: ReceiptData, preferWhatsApp: Boolean = false) {
         try {
             val bitmap = createReceiptBitmap(receipt)
 
             val receiptsDir = File(context.cacheDir, "receipts")
             receiptsDir.mkdirs()
-            val file = File(receiptsDir, "receipt_${receipt.receiptNumber.replace(Regex("[^a-zA-Z0-9_-]"), "_")}.png")
-            val fos = FileOutputStream(file)
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
-            fos.flush()
-            fos.close()
+            val safeNum = receipt.receiptNumber.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            val file = File(receiptsDir, "receipt_$safeNum.png")
+            FileOutputStream(file).use { fos ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos)
+                fos.flush()
+            }
 
             val uri: Uri = FileProvider.getUriForFile(
                 context,
@@ -329,24 +330,111 @@ object ReceiptGenerator {
                 file
             )
 
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "image/png"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                val summary = if (receipt.isDue) {
-                    "Receipt #${receipt.receiptNumber} from ${receipt.businessName}. Total Due: ${receipt.currencySymbol}${String.format(Locale.US, "%.2f", receipt.grandTotal)}. Pay via UPI: ${receipt.upiId}"
-                } else {
-                    "Receipt #${receipt.receiptNumber} from ${receipt.businessName} for ${receipt.customerName}. Paid: ${receipt.currencySymbol}${String.format(Locale.US, "%.2f", receipt.grandTotal)}."
-                }
-                putExtra(Intent.EXTRA_TEXT, summary)
-                putExtra(Intent.EXTRA_SUBJECT, "Receipt #${receipt.receiptNumber} - ${receipt.businessName}")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-
-            val chooser = Intent.createChooser(shareIntent, "Share Receipt")
-            context.startActivity(chooser)
+            val summary = buildReceiptShareCaption(receipt)
+            launchFileProviderShareIntent(
+                context = context,
+                uri = uri,
+                mimeType = "image/png",
+                caption = summary,
+                subject = "Receipt #${receipt.receiptNumber} - ${receipt.businessName}",
+                chooserTitle = "Share Receipt Image",
+                preferWhatsApp = preferWhatsApp
+            )
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /**
+     * Generates a crisp 1-page PDF document from the high-resolution receipt bitmap,
+     * saves it under cacheDir/receipts, and shares it via FileProvider (optionally targeting WhatsApp).
+     */
+    fun generateAndShareReceiptPdf(context: Context, receipt: ReceiptData, preferWhatsApp: Boolean = false) {
+        try {
+            val bitmap = createReceiptBitmap(receipt)
+            val pdfDocument = android.graphics.pdf.PdfDocument()
+            val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(bitmap.width, bitmap.height, 1).create()
+            val page = pdfDocument.startPage(pageInfo)
+            page.canvas.drawBitmap(bitmap, 0f, 0f, null)
+            pdfDocument.finishPage(page)
+
+            val receiptsDir = File(context.cacheDir, "receipts")
+            receiptsDir.mkdirs()
+            val safeNum = receipt.receiptNumber.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            val pdfFile = File(receiptsDir, "Receipt_$safeNum.pdf")
+            FileOutputStream(pdfFile).use { fos ->
+                pdfDocument.writeTo(fos)
+                fos.flush()
+            }
+            pdfDocument.close()
+
+            val uri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                pdfFile
+            )
+
+            val summary = buildReceiptShareCaption(receipt)
+            launchFileProviderShareIntent(
+                context = context,
+                uri = uri,
+                mimeType = "application/pdf",
+                caption = summary,
+                subject = "Receipt #${receipt.receiptNumber} - ${receipt.businessName}",
+                chooserTitle = "Share Receipt PDF",
+                preferWhatsApp = preferWhatsApp
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun buildReceiptShareCaption(receipt: ReceiptData): String {
+        return if (receipt.isDue) {
+            "Receipt #${receipt.receiptNumber} from ${receipt.businessName} for ${receipt.customerName}.\nTotal Due: ${receipt.currencySymbol}${String.format(Locale.US, "%.2f", receipt.grandTotal)}\nPay via UPI: ${receipt.upiId}"
+        } else {
+            "Receipt #${receipt.receiptNumber} from ${receipt.businessName} for ${receipt.customerName}.\nPaid: ${receipt.currencySymbol}${String.format(Locale.US, "%.2f", receipt.grandTotal)} (${receipt.paymentStatus}). Thank you!"
+        }
+    }
+
+    private fun launchFileProviderShareIntent(
+        context: Context,
+        uri: Uri,
+        mimeType: String,
+        caption: String,
+        subject: String,
+        chooserTitle: String,
+        preferWhatsApp: Boolean
+    ) {
+        val baseIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, caption)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            clipData = android.content.ClipData.newRawUri(subject, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        if (preferWhatsApp) {
+            val pm = context.packageManager
+            val whatsAppPackages = listOf("com.whatsapp", "com.whatsapp.w4b")
+            for (pkg in whatsAppPackages) {
+                val waIntent = Intent(baseIntent).apply { setPackage(pkg) }
+                if (waIntent.resolveActivity(pm) != null) {
+                    try {
+                        context.startActivity(waIntent)
+                        return
+                    } catch (_: Exception) {
+                        // Fall through to standard chooser
+                    }
+                }
+            }
+        }
+
+        val chooser = Intent.createChooser(baseIntent, chooserTitle).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(chooser)
     }
 
     /**

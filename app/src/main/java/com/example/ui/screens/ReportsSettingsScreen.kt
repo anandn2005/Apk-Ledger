@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -22,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import com.example.data.AppPreferencesManager
@@ -46,6 +49,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -104,12 +108,57 @@ fun ReportsSettingsScreen(
     onAddCategory: (String) -> Unit = {},
     onDeleteCategory: (String) -> Unit = {},
     onReorderCategories: (List<String>) -> Unit = {},
-    onSetCategoryIcon: (String, String) -> Unit = { _, _ -> }
+    onSetCategoryIcon: (String, String) -> Unit = { _, _ -> },
+    onShowMessage: (String) -> Unit = {},
+    onImportBackupData: (String) -> Unit = {},
+    onExportJson: suspend () -> String = { "{}" }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val prefs = remember { AppPreferencesManager(context) }
+
+    // Storage Access Framework (SAF) Launchers for Real File-Picker Backup & Restore (.json / .csv)
+    val saveJsonBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val jsonContent = onExportJson()
+                val ok = ExportUtils.writeContentToUri(context, uri, jsonContent)
+                onShowMessage(if (ok) "Full JSON backup saved to device" else "Failed to save JSON backup file")
+            }
+        }
+    }
+
+    val saveCsvBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val fullCsv = ExportUtils.generateCompleteDatabaseCsv(
+                state.customers.map { it.customer },
+                state.allTransactions,
+                state.invoices,
+                state.rateItems
+            )
+            val ok = ExportUtils.writeContentToUri(context, uri, fullCsv)
+            onShowMessage(if (ok) "Complete CSV backup saved to device" else "Failed to save CSV backup file")
+        }
+    }
+
+    val openBackupFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val content = ExportUtils.readTextFromUri(context, uri)
+            if (!content.isNullOrBlank()) {
+                onImportBackupData(content.trim())
+            } else {
+                onShowMessage("Selected backup file is empty or unreadable")
+            }
+        }
+    }
 
     // Dynamically derive theme state: responds instantly to the global dark mode toggle
     val isDark = state.isDarkMode
@@ -140,10 +189,18 @@ fun ReportsSettingsScreen(
 
     val haptic = LocalHapticFeedback.current
 
-    var isBiometricEnabled by remember { mutableStateOf(false) }
-    var autoSyncFrequency by remember { mutableStateOf("Every time") }
+    var isBiometricEnabled by remember { mutableStateOf(prefs.isBiometricEnabled) }
+    var autoSyncFrequency by remember {
+        mutableStateOf(
+            prefs.autoSyncFrequency.ifBlank { "Every change (Instant)" }
+        )
+    }
     var reminderTemplateText by remember {
-        mutableStateOf("Dear Customer, gentle reminder regarding balance payment of {AMOUNT} to {BUSINESS_NAME}. Thank you!")
+        mutableStateOf(
+            prefs.reminderTemplate.ifBlank {
+                "Dear {CUSTOMER_NAME}, gentle reminder regarding balance payment of {AMOUNT} to {BUSINESS_NAME}. Thank you!"
+            }
+        )
     }
 
     val listState = rememberLazyListState()
@@ -792,7 +849,7 @@ fun ReportsSettingsScreen(
                                             if (state.upiId.isNotBlank()) {
                                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                                 clipboard.setPrimaryClip(ClipData.newPlainText("UPI ID", state.upiId))
-                                                Toast.makeText(context, "UPI ID copied", Toast.LENGTH_SHORT).show()
+                                                onShowMessage("UPI ID copied to clipboard")
                                             }
                                         }
                                     ) {
@@ -1018,6 +1075,7 @@ fun ReportsSettingsScreen(
                         modifier = Modifier.fillMaxWidth().testTag("settings_business_name"),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1035,6 +1093,7 @@ fun ReportsSettingsScreen(
                         modifier = Modifier.fillMaxWidth().testTag("settings_business_address"),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1046,12 +1105,13 @@ fun ReportsSettingsScreen(
                     )
                     OutlinedTextField(
                         value = phone,
-                        onValueChange = { phone = it },
+                        onValueChange = { phone = it.filter { ch -> ch.isDigit() || ch == '+' || ch == ' ' || ch == '-' } },
                         label = { Text("Contact Number") },
                         placeholder = { Text("e.g. +91 98765 43210") },
                         modifier = Modifier.fillMaxWidth().testTag("settings_contact_number"),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1063,12 +1123,13 @@ fun ReportsSettingsScreen(
                     )
                     OutlinedTextField(
                         value = gstin,
-                        onValueChange = { gstin = it },
+                        onValueChange = { gstin = it.uppercase().trim().take(15) },
                         label = { Text("GSTIN (Tax ID)") },
                         placeholder = { Text("e.g. 27AAAAA0000A1Z5") },
                         modifier = Modifier.fillMaxWidth().testTag("settings_gstin"),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1080,12 +1141,13 @@ fun ReportsSettingsScreen(
                     )
                     OutlinedTextField(
                         value = upiId,
-                        onValueChange = { upiId = it },
-                        label = { Text("UPI ID") },
+                        onValueChange = { upiId = it.replace(" ", "") },
+                        label = { Text("UPI ID (for Payment QR)") },
                         placeholder = { Text("e.g. merchant@upi") },
                         modifier = Modifier.fillMaxWidth().testTag("settings_upi_id"),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1098,7 +1160,11 @@ fun ReportsSettingsScreen(
 
                     Text("Currency Symbol:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = textPrimary)
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         listOf("₹", "$", "€", "£", "A$", "C$").forEach { symbol ->
                             FilterChip(
                                 selected = selectedCurrency == symbol,
@@ -1114,12 +1180,37 @@ fun ReportsSettingsScreen(
                             )
                         }
                     }
+
+                    OutlinedTextField(
+                        value = selectedCurrency,
+                        onValueChange = { if (it.length <= 4) selectedCurrency = it.trim() },
+                        label = { Text("Custom Currency Symbol") },
+                        placeholder = { Text("₹") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = accentGreen,
+                            unfocusedBorderColor = cardBorder,
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = cardBackground,
+                            unfocusedContainerColor = cardBackground
+                        )
+                    )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onUpdateBusinessDetails(name, phone, address, selectedCurrency, upiId, gstin)
+                        onUpdateBusinessDetails(
+                            name.trim(),
+                            phone.trim(),
+                            address.trim(),
+                            selectedCurrency.ifBlank { "₹" },
+                            upiId.trim(),
+                            gstin.trim()
+                        )
                         showBusinessDetailsDialog = false
                     },
                     shape = RoundedCornerShape(10.dp),
@@ -1187,7 +1278,7 @@ fun ReportsSettingsScreen(
                                 } else {
                                     onSetPasscode("", false)
                                     isEditingPin = false
-                                    Toast.makeText(context, "Passcode lock disabled", Toast.LENGTH_SHORT).show()
+                                    onShowMessage("Passcode lock disabled")
                                 }
                             },
                             colors = SwitchDefaults.colors(
@@ -1219,7 +1310,15 @@ fun ReportsSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (pin.length == 4) {
+                                        onSetPasscode(pin, true)
+                                        showPasscodeDialog = false
+                                    }
+                                }
+                            ),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = accentGreen,
                                 unfocusedBorderColor = cardBorder,
@@ -1234,7 +1333,6 @@ fun ReportsSettingsScreen(
                                 if (pin.length == 4) {
                                     onSetPasscode(pin, true)
                                     showPasscodeDialog = false
-                                    Toast.makeText(context, "Passcode saved successfully", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             enabled = pin.length == 4,
@@ -1274,7 +1372,11 @@ fun ReportsSettingsScreen(
                                 }
                                 Switch(
                                     checked = isBiometricEnabled,
-                                    onCheckedChange = { isBiometricEnabled = it },
+                                    onCheckedChange = {
+                                        isBiometricEnabled = it
+                                        prefs.isBiometricEnabled = it
+                                        onShowMessage(if (it) "Biometric unlock enabled" else "Biometric unlock disabled")
+                                    },
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = Color.White,
                                         checkedTrackColor = accentGreen,
@@ -1331,8 +1433,10 @@ fun ReportsSettingsScreen(
                             .clickable {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 autoSyncFrequency = opt
+                                prefs.autoSyncFrequency = opt
+                                prefs.isAutoSyncEnabled = opt != "Manual only"
                                 showAutoSyncDialog = false
-                                Toast.makeText(context, "Auto-sync set to $opt", Toast.LENGTH_SHORT).show()
+                                onShowMessage("Auto-sync set to $opt")
                             }
                     ) {
                         Row(
@@ -1359,21 +1463,25 @@ fun ReportsSettingsScreen(
     }
 
     // ============================================================
-    // DIALOG: EXPORT LEDGER DATA MODAL
+    // DIALOG: EXPORT & BACKUP LEDGER DATA MODAL (SAF + FILEPROVIDER)
     // ============================================================
     if (showExportDialog) {
+        var showPasteRestoreField by remember { mutableStateOf(false) }
+        var backupCsvInput by remember { mutableStateOf("") }
+        val dateStamp = remember { SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date()) }
+
         FrostedIosModal(
             onDismissRequest = { showExportDialog = false },
-            title = "Export Ledger Data",
+            title = "Export & Backup Data",
             icon = Icons.AutoMirrored.Filled.DriveFileMove,
             isDark = isDark
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Export customer pending balances (Customer Name, Phone, Total Pending Amount) to a standardized CSV.",
+                    text = "Save or restore full .json / .csv backup files on your device, or share file attachments via WhatsApp, Drive, or Email.",
                     style = MaterialTheme.typography.bodySmall,
                     color = textSecondary
                 )
@@ -1401,6 +1509,13 @@ fun ReportsSettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
+                            Text("Rate List Items:", fontSize = 13.sp, color = textSecondary)
+                            Text("${state.rateItems.size}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = textPrimary)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Text("Customers with Dues:", fontSize = 13.sp, color = textSecondary)
                             Text("${state.customers.count { it.netBalance > 0 }}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = DebitRed)
                         }
@@ -1420,24 +1535,156 @@ fun ReportsSettingsScreen(
                     }
                 }
 
+                // 1. Save Full Backup (.json) to Device via SAF CreateDocument
                 Button(
                     onClick = {
                         showExportDialog = false
-                        val csvContent = ExportUtils.generateLedgerCsv(state.customers)
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            putExtra(Intent.EXTRA_TEXT, csvContent)
-                            type = "text/csv"
-                        }
-                        context.startActivity(Intent.createChooser(sendIntent, "Export Ledger CSV"))
+                        saveJsonBackupLauncher.launch("LedgerMate_Backup_$dateStamp.json")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = accentGreen, contentColor = Color.White),
-                    contentPadding = PaddingValues(vertical = 12.dp)
+                    contentPadding = PaddingValues(vertical = 11.dp)
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Export & Share CSV", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Save Full Backup (.json) to Device", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                // 2. Save Complete Database (.csv) to Device via SAF CreateDocument
+                OutlinedButton(
+                    onClick = {
+                        showExportDialog = false
+                        saveCsvBackupLauncher.launch("LedgerMate_Backup_$dateStamp.csv")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, accentGreen),
+                    contentPadding = PaddingValues(vertical = 11.dp)
+                ) {
+                    Icon(Icons.Default.TableChart, contentDescription = null, tint = accentGreen, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Save Complete Backup (.csv) to Device", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = accentGreen)
+                }
+
+                // 3. Restore from File (.json / .csv) via SAF OpenDocument
+                OutlinedButton(
+                    onClick = {
+                        showExportDialog = false
+                        openBackupFileLauncher.launch(arrayOf("application/json", "text/csv", "text/comma-separated-values", "text/plain", "*/*"))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, cardBorder),
+                    contentPadding = PaddingValues(vertical = 11.dp)
+                ) {
+                    Icon(Icons.Default.UploadFile, contentDescription = null, tint = textPrimary, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Restore from Backup File (.json / .csv)", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = textPrimary)
+                }
+
+                // 4. Share File Attachments via FileProvider (.json & .csv)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            showExportDialog = false
+                            scope.launch {
+                                val jsonContent = onExportJson()
+                                ExportUtils.shareBackupFile(
+                                    context = context,
+                                    fileName = "LedgerMate_Backup_$dateStamp.json",
+                                    content = jsonContent,
+                                    mimeType = "application/json",
+                                    title = "Share JSON Backup File"
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, cardBorder),
+                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, tint = textSecondary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Share .JSON", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = textPrimary)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            showExportDialog = false
+                            val fullCsv = ExportUtils.generateCompleteDatabaseCsv(
+                                state.customers.map { it.customer },
+                                state.allTransactions,
+                                state.invoices,
+                                state.rateItems
+                            )
+                            ExportUtils.shareBackupFile(
+                                context = context,
+                                fileName = "LedgerMate_Backup_$dateStamp.csv",
+                                content = fullCsv,
+                                mimeType = "text/csv",
+                                title = "Share CSV Backup File"
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, cardBorder),
+                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null, tint = textSecondary, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Share .CSV", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = textPrimary)
+                    }
+                }
+
+                // 5. Optional Paste Restore Input
+                TextButton(
+                    onClick = { showPasteRestoreField = !showPasteRestoreField },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (showPasteRestoreField) "Hide Paste Restore Input" else "Or Paste Backup Text Manually",
+                        color = textSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp
+                    )
+                }
+
+                if (showPasteRestoreField) {
+                    OutlinedTextField(
+                        value = backupCsvInput,
+                        onValueChange = { backupCsvInput = it },
+                        placeholder = { Text("Paste exported LedgerMate JSON / CSV content here...", fontSize = 12.sp) },
+                        minLines = 3,
+                        maxLines = 5,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = accentGreen,
+                            unfocusedBorderColor = cardBorder,
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = surfaceVariantBg,
+                            unfocusedContainerColor = surfaceVariantBg
+                        )
+                    )
+                    Button(
+                        onClick = {
+                            if (backupCsvInput.isNotBlank()) {
+                                onImportBackupData(backupCsvInput.trim())
+                                showExportDialog = false
+                            }
+                        },
+                        enabled = backupCsvInput.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentGreen, contentColor = Color.White)
+                    ) {
+                        Text("Import & Restore Data", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -1557,8 +1804,9 @@ fun ReportsSettingsScreen(
                     Button(
                         onClick = {
                             reminderTemplateText = tempText
+                            prefs.reminderTemplate = tempText
                             showReminderTemplateDialog = false
-                            Toast.makeText(context, "Reminder template saved", Toast.LENGTH_SHORT).show()
+                            onShowMessage("WhatsApp reminder template saved")
                         },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp),
@@ -1575,17 +1823,14 @@ fun ReportsSettingsScreen(
     // DIALOG 5: DELETED HISTORY & TRASH DIALOG
     // ============================================================
     if (showConfirmClearAllDialog) {
-        val deletedCount = state.auditLogs.count {
-            it.actionType == "DELETE_INVOICE" || it.actionType == "DELETE_RECEIPT" ||
-            it.title.contains("Invoice", ignoreCase = true) || it.title.contains("Receipt", ignoreCase = true)
-        }
+        val deletedCount = state.auditLogs.size
 
         AlertDialog(
             onDismissRequest = { showConfirmClearAllDialog = false },
             containerColor = cardBackground,
             title = {
                 Text(
-                    text = "Delete All Receipts?",
+                    text = "Empty Trash History?",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = textPrimary
@@ -1593,7 +1838,7 @@ fun ReportsSettingsScreen(
             },
             text = {
                 Text(
-                    text = "Permanently delete all $deletedCount deleted receipt(s)? This action cannot be undone.",
+                    text = "Permanently delete all $deletedCount item(s) in Trash? This action cannot be undone.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = textSecondary
                 )
@@ -1625,12 +1870,31 @@ fun ReportsSettingsScreen(
     }
 
     if (showAuditHistoryDialog) {
-        val deletedReceiptLogs = remember(state.auditLogs) {
-            state.auditLogs.filter { log ->
-                log.actionType == "DELETE_INVOICE" ||
-                log.actionType == "DELETE_RECEIPT" ||
-                log.title.contains("Invoice", ignoreCase = true) ||
-                log.title.contains("Receipt", ignoreCase = true)
+        var selectedTrashFilter by remember { mutableStateOf("ALL") }
+        val filteredAuditLogs = remember(state.auditLogs, selectedTrashFilter) {
+            when (selectedTrashFilter) {
+                "RECEIPTS" -> state.auditLogs.filter {
+                    it.actionType.contains("INVOICE", ignoreCase = true) ||
+                    it.actionType.contains("RECEIPT", ignoreCase = true) ||
+                    it.title.contains("Invoice", ignoreCase = true) ||
+                    it.title.contains("Receipt", ignoreCase = true)
+                }
+                "CUSTOMERS" -> state.auditLogs.filter {
+                    it.actionType.contains("CUSTOMER", ignoreCase = true) ||
+                    it.title.contains("Customer", ignoreCase = true)
+                }
+                "ITEMS" -> state.auditLogs.filter {
+                    it.actionType.contains("RATE", ignoreCase = true) ||
+                    it.actionType.contains("ITEM", ignoreCase = true) ||
+                    it.title.contains("Item", ignoreCase = true)
+                }
+                "TRANSACTIONS" -> state.auditLogs.filter {
+                    it.actionType.contains("TRANSACTION", ignoreCase = true) ||
+                    it.title.contains("Transaction", ignoreCase = true) ||
+                    it.title.contains("Sale", ignoreCase = true) ||
+                    it.title.contains("Payment", ignoreCase = true)
+                }
+                else -> state.auditLogs
             }
         }
 
@@ -1640,7 +1904,7 @@ fun ReportsSettingsScreen(
             icon = Icons.Outlined.Delete,
             isDark = isDark,
             actionButton = {
-                if (deletedReceiptLogs.isNotEmpty()) {
+                if (state.auditLogs.isNotEmpty()) {
                     Button(
                         onClick = { showConfirmClearAllDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = DebitRed, contentColor = Color.White),
@@ -1650,57 +1914,89 @@ fun ReportsSettingsScreen(
                     ) {
                         Icon(Icons.Default.DeleteForever, contentDescription = "Delete All", modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Delete All", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Text("Empty All", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                     }
                 }
             }
         ) {
-            if (deletedReceiptLogs.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Filter Chips for All, Receipts, Customers, Items, Transactions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    listOf(
+                        "ALL" to "All (${state.auditLogs.size})",
+                        "RECEIPTS" to "Bills",
+                        "CUSTOMERS" to "Parties",
+                        "ITEMS" to "Items",
+                        "TRANSACTIONS" to "Entries"
+                    ).forEach { (key, label) ->
+                        val isSel = selectedTrashFilter == key
                         Surface(
-                            shape = CircleShape,
-                            color = accentGreenLight,
-                            modifier = Modifier.size(54.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSel) accentGreen else surfaceVariantBg,
+                            border = BorderStroke(1.dp, if (isSel) accentGreen else cardBorder),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { selectedTrashFilter = key }
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.ReceiptLong,
-                                    contentDescription = null,
-                                    tint = accentGreen,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSel) Color.White else textSecondary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                            )
                         }
-                        Text(
-                            text = "No deleted receipts",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary
-                        )
-                        Text(
-                            text = "Deleted receipts will appear here for recovery.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textSecondary,
-                            textAlign = TextAlign.Center
-                        )
                     }
                 }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+
+                if (filteredAuditLogs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(28.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = accentGreenLight,
+                                modifier = Modifier.size(54.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.RestoreFromTrash,
+                                        contentDescription = null,
+                                        tint = accentGreen,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Trash is empty",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = textPrimary
+                            )
+                            Text(
+                                text = "Deleted customers, items, entries, and receipts appear here for one-tap recovery.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = textSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
                     Text(
-                        text = "${deletedReceiptLogs.size} deleted receipt(s) stored",
+                        text = "${filteredAuditLogs.size} recoverable record(s)",
                         fontSize = 12.sp,
                         color = textSecondary
                     )
@@ -1711,7 +2007,7 @@ fun ReportsSettingsScreen(
                             .heightIn(max = 340.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(deletedReceiptLogs, key = { it.id }) { log ->
+                        items(filteredAuditLogs, key = { it.id }) { log ->
                             Card(
                                 shape = RoundedCornerShape(14.dp),
                                 colors = CardDefaults.cardColors(containerColor = if (isDark) Color(0xFF222328) else Color(0xFFF9FAFB)),
@@ -1737,7 +2033,7 @@ fun ReportsSettingsScreen(
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
                                                 Icon(
-                                                    imageVector = Icons.Default.ReceiptLong,
+                                                    imageVector = Icons.Default.RestoreFromTrash,
                                                     contentDescription = null,
                                                     tint = accentGreen,
                                                     modifier = Modifier.size(20.dp)
@@ -1924,6 +2220,16 @@ fun ReportsSettingsScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (newUnitText.isNotBlank()) {
+                                    onAddUnit(newUnitText.trim())
+                                    onShowMessage("Unit '${newUnitText.trim()}' added")
+                                    newUnitText = ""
+                                }
+                            }
+                        ),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
@@ -1939,6 +2245,7 @@ fun ReportsSettingsScreen(
                             if (newUnitText.isNotBlank()) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onAddUnit(newUnitText.trim())
+                                onShowMessage("Unit '${newUnitText.trim()}' added")
                                 newUnitText = ""
                             }
                         },
@@ -2179,11 +2486,22 @@ fun ReportsSettingsScreen(
                         modifier = Modifier.weight(1f),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (newCatName.isNotBlank()) {
+                                    onAddCategory(newCatName.trim())
+                                    newCatName = ""
+                                }
+                            }
+                        ),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentGreen,
                             unfocusedBorderColor = cardBorder,
                             focusedTextColor = textPrimary,
-                            unfocusedTextColor = textPrimary
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = surfaceVariantBg,
+                            unfocusedContainerColor = surfaceVariantBg
                         )
                     )
 

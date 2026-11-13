@@ -396,11 +396,26 @@ fun pushBusinessDetails() {
     }
 
     private suspend fun syncCustomers(firestore: FirebaseFirestore, uid: String): Int {
+        val colKey = "customers"
         val collection = firestore.collection("users").document(uid).collection("customers")
-        val snapshot = FirebaseAuthManager.awaitTask { collection.get() }
+        val localList = dao.getAllCustomersList()
+        val localMap = localList.associateBy { it.id }
+        val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
+
+        val snapshot = FirebaseAuthManager.awaitTask {
+            if (watermark > 0L) {
+                collection.whereGreaterThan("last_updated", watermark).get()
+            } else {
+                collection.get()
+            }
+        }
+
+        var maxSeenTimestamp = watermark
         val remoteMap = snapshot.documents.mapNotNull { doc ->
             val id = doc.getString("id") ?: doc.id
             val name = doc.getString("name") ?: return@mapNotNull null
+            val updated = doc.getLong("last_updated") ?: doc.getLong("createdAt") ?: System.currentTimeMillis()
+            if (updated > maxSeenTimestamp) maxSeenTimestamp = updated
             CustomerEntity(
                 id = id,
                 name = name,
@@ -409,12 +424,9 @@ fun pushBusinessDetails() {
                 partyType = doc.getString("partyType") ?: CustomerEntity.PARTY_TYPE_CUSTOMER,
                 notes = doc.getString("notes") ?: "",
                 createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
-                lastUpdated = doc.getLong("last_updated") ?: doc.getLong("createdAt") ?: System.currentTimeMillis()
+                lastUpdated = updated
             )
         }.associateBy { it.id }
-
-        val localList = dao.getAllCustomersList()
-        val localMap = localList.associateBy { it.id }
 
         // Cloud items not in local or cloud is newer -> update local
         val toInsertLocally = mutableListOf<CustomerEntity>()
@@ -428,24 +440,68 @@ fun pushBusinessDetails() {
             dao.insertCustomers(toInsertLocally)
         }
 
-        // Local items not in cloud or local is newer -> push to cloud
-        var pushed = 0
-        for ((id, local) in localMap) {
-            val remote = remoteMap[id]
-            if (remote == null || local.lastUpdated > remote.lastUpdated) {
-                pushCustomerToFirestore(collection, local)
-                pushed++
+        // Delta Push: Only push dirty records or records updated after watermark
+        val dirtyIds = prefs.getDirtyRecordIds(colKey)
+        val toPush = localList.filter { local ->
+            val remote = remoteMap[local.id]
+            if (watermark == 0L) {
+                remote == null || local.lastUpdated > remote.lastUpdated
+            } else {
+                (local.id in dirtyIds || local.lastUpdated > watermark) &&
+                    (remote == null || local.lastUpdated > remote.lastUpdated)
             }
         }
+
+        var pushed = 0
+        if (toPush.isNotEmpty()) {
+            for (chunk in toPush.chunked(400)) {
+                val batch = firestore.batch()
+                for (c in chunk) {
+                    val map = hashMapOf<String, Any>(
+                        "id" to c.id,
+                        "name" to c.name,
+                        "phone" to c.phone,
+                        "businessName" to c.businessName,
+                        "partyType" to c.partyType,
+                        "notes" to c.notes,
+                        "createdAt" to c.createdAt,
+                        "last_updated" to c.lastUpdated
+                    )
+                    batch.set(collection.document(c.id), map, SetOptions.merge())
+                    if (c.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = c.lastUpdated
+                }
+                FirebaseAuthManager.awaitTask { batch.commit() }
+                prefs.clearCollectionDirty(colKey, chunk.map { it.id })
+                pushed += chunk.size
+            }
+        }
+
+        val finalWatermark = maxOf(maxSeenTimestamp, localList.maxOfOrNull { it.lastUpdated } ?: 0L, System.currentTimeMillis() - 1000L)
+        prefs.setCollectionWatermark(colKey, finalWatermark)
         return toInsertLocally.size + pushed
     }
 
     private suspend fun syncTransactions(firestore: FirebaseFirestore, uid: String): Int {
+        val colKey = "transactions"
         val collection = firestore.collection("users").document(uid).collection("transactions")
-        val snapshot = FirebaseAuthManager.awaitTask { collection.get() }
+        val localList = dao.getAllTransactionsList()
+        val localMap = localList.associateBy { it.id }
+        val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
+
+        val snapshot = FirebaseAuthManager.awaitTask {
+            if (watermark > 0L) {
+                collection.whereGreaterThan("last_updated", watermark).get()
+            } else {
+                collection.get()
+            }
+        }
+
+        var maxSeenTimestamp = watermark
         val remoteMap = snapshot.documents.mapNotNull { doc ->
             val id = doc.getString("id") ?: doc.id
             val custId = doc.getString("customerId") ?: return@mapNotNull null
+            val updated = doc.getLong("last_updated") ?: doc.getLong("date") ?: System.currentTimeMillis()
+            if (updated > maxSeenTimestamp) maxSeenTimestamp = updated
             TransactionEntity(
                 id = id,
                 customerId = custId,
@@ -459,12 +515,9 @@ fun pushBusinessDetails() {
                 invoiceRef = doc.getString("invoiceRef") ?: "",
                 paymentMethod = doc.getString("paymentMethod") ?: "CASH",
                 status = doc.getString("status") ?: "COMPLETED",
-                lastUpdated = doc.getLong("last_updated") ?: doc.getLong("date") ?: System.currentTimeMillis()
+                lastUpdated = updated
             )
         }.associateBy { it.id }
-
-        val localList = dao.getAllTransactionsList()
-        val localMap = localList.associateBy { it.id }
 
         val toInsertLocally = mutableListOf<TransactionEntity>()
         for ((id, remote) in remoteMap) {
@@ -477,14 +530,54 @@ fun pushBusinessDetails() {
             dao.insertTransactions(toInsertLocally)
         }
 
-        var pushed = 0
-        for ((id, local) in localMap) {
-            val remote = remoteMap[id]
-            if (remote == null || local.lastUpdated > remote.lastUpdated) {
-                pushTransactionToFirestore(collection, local)
-                pushed++
+        val dirtyIds = prefs.getDirtyRecordIds(colKey)
+        val toPush = localList.filter { local ->
+            val remote = remoteMap[local.id]
+            if (watermark == 0L) {
+                remote == null || local.lastUpdated > remote.lastUpdated
+            } else {
+                (local.id in dirtyIds || local.lastUpdated > watermark) &&
+                    (remote == null || local.lastUpdated > remote.lastUpdated)
             }
         }
+
+        var pushed = 0
+        if (toPush.isNotEmpty()) {
+            for (chunk in toPush.chunked(400)) {
+                val batch = firestore.batch()
+                for (t in chunk) {
+                    val isoDate = com.example.ui.Formatters.toLocalDateTimeString(t.date)
+                    val safeQuantity = if (t.quantity.isNaN() || t.quantity.isInfinite()) 0.0 else t.quantity
+                    val safeRate = if (t.rate.isNaN() || t.rate.isInfinite()) 0.0 else t.rate
+                    val safeSubtotal = if (t.subtotal.isNaN() || t.subtotal.isInfinite()) 0.0 else t.subtotal
+                    val map = hashMapOf<String, Any>(
+                        "id" to t.id,
+                        "customerId" to t.customerId,
+                        "amount" to t.amount,
+                        "type" to t.type,
+                        "description" to t.description,
+                        "date" to t.date,
+                        "dateIso" to isoDate,
+                        "serverTimestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                        "invoiceRef" to t.invoiceRef,
+                        "paymentMethod" to t.paymentMethod,
+                        "status" to t.status,
+                        "last_updated" to t.lastUpdated,
+                        "quantity" to safeQuantity,
+                        "rate" to safeRate,
+                        "subtotal" to safeSubtotal
+                    )
+                    batch.set(collection.document(t.id), map, SetOptions.merge())
+                    if (t.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = t.lastUpdated
+                }
+                FirebaseAuthManager.awaitTask { batch.commit() }
+                prefs.clearCollectionDirty(colKey, chunk.map { it.id })
+                pushed += chunk.size
+            }
+        }
+
+        val finalWatermark = maxOf(maxSeenTimestamp, localList.maxOfOrNull { it.lastUpdated } ?: 0L, System.currentTimeMillis() - 1000L)
+        prefs.setCollectionWatermark(colKey, finalWatermark)
         return toInsertLocally.size + pushed
     }
 
@@ -573,8 +666,6 @@ fun pushBusinessDetails() {
 
         val hasVars = rawHasMultipleVariants || (variantsJson.isNotBlank() && variantsJson != "[]")
 
-        Log.d("VARIANT_TRACE", "Hop 3 - Firestore Read docToRateItem: docId='${doc.id}', name='$name', hasMultipleVariants=$hasVars, variantsJson='$variantsJson'")
-
         return RateItemEntity(
             id = cleanId,
             name = name.trim(),
@@ -594,20 +685,34 @@ fun pushBusinessDetails() {
     }
 
     private suspend fun syncRateItems(firestore: FirebaseFirestore, uid: String): Int {
+        val colKey = "rate_items"
         val itemsCol = firestore.collection("users").document(uid).collection("items")
         val rateItemsCol = firestore.collection("users").document(uid).collection("rate_items")
+        val localList = dao.getAllRateItemsList()
+        val localMap = localList.associateBy { it.id }
+        val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
 
-        val itemsSnapshot = try { FirebaseAuthManager.awaitTask { itemsCol.get() } } catch (_: Exception) { null }
-        val rateItemsSnapshot = try { FirebaseAuthManager.awaitTask { rateItemsCol.get() } } catch (_: Exception) { null }
+        val itemsSnapshot = try {
+            FirebaseAuthManager.awaitTask {
+                if (watermark > 0L) itemsCol.whereGreaterThan("last_updated", watermark).get() else itemsCol.get()
+            }
+        } catch (_: Exception) { null }
+        val rateItemsSnapshot = try {
+            FirebaseAuthManager.awaitTask {
+                if (watermark > 0L) rateItemsCol.whereGreaterThan("last_updated", watermark).get() else rateItemsCol.get()
+            }
+        } catch (_: Exception) { null }
 
         val allDocs = mutableListOf<com.google.firebase.firestore.DocumentSnapshot>()
         itemsSnapshot?.documents?.let { allDocs.addAll(it) }
         rateItemsSnapshot?.documents?.let { allDocs.addAll(it) }
 
-        val remoteMap = allDocs.mapNotNull { doc -> docToRateItem(doc) }.associateBy { it.id }
-
-        val localList = dao.getAllRateItemsList()
-        val localMap = localList.associateBy { it.id }
+        var maxSeenTimestamp = watermark
+        val remoteMap = allDocs.mapNotNull { doc ->
+            docToRateItem(doc)?.also { item ->
+                if (item.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = item.lastUpdated
+            }
+        }.associateBy { it.id }
 
         val toInsertLocally = mutableListOf<RateItemEntity>()
         for ((id, remote) in remoteMap) {
@@ -620,14 +725,27 @@ fun pushBusinessDetails() {
             dao.insertRateItems(toInsertLocally)
         }
 
-        var pushed = 0
-        for ((id, local) in localMap) {
-            val remote = remoteMap[id]
-            if (remote == null || local.lastUpdated > remote.lastUpdated) {
-                pushRateItemToFirestore(itemsCol, rateItemsCol, local)
-                pushed++
+        val dirtyIds = prefs.getDirtyRecordIds(colKey)
+        val toPush = localList.filter { local ->
+            val remote = remoteMap[local.id]
+            if (watermark == 0L) {
+                remote == null || local.lastUpdated > remote.lastUpdated
+            } else {
+                (local.id in dirtyIds || local.lastUpdated > watermark) &&
+                    (remote == null || local.lastUpdated > remote.lastUpdated)
             }
         }
+
+        var pushed = 0
+        for (local in toPush) {
+            pushRateItemToFirestore(itemsCol, rateItemsCol, local)
+            prefs.clearRecordDirty(colKey, local.id)
+            if (local.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = local.lastUpdated
+            pushed++
+        }
+
+        val finalWatermark = maxOf(maxSeenTimestamp, localList.maxOfOrNull { it.lastUpdated } ?: 0L, System.currentTimeMillis() - 1000L)
+        prefs.setCollectionWatermark(colKey, finalWatermark)
         return toInsertLocally.size + pushed
     }
 
@@ -779,11 +897,26 @@ fun pushBusinessDetails() {
     }
 
     private suspend fun syncInvoices(firestore: FirebaseFirestore, uid: String): Int {
+        val colKey = "invoices"
         val collection = firestore.collection("users").document(uid).collection("invoices")
-        val snapshot = FirebaseAuthManager.awaitTask { collection.get() }
+        val localList = dao.getAllInvoicesList()
+        val localMap = localList.associateBy { it.id }
+        val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
+
+        val snapshot = FirebaseAuthManager.awaitTask {
+            if (watermark > 0L) {
+                collection.whereGreaterThan("last_updated", watermark).get()
+            } else {
+                collection.get()
+            }
+        }
+
+        var maxSeenTimestamp = watermark
         val remoteMap = snapshot.documents.mapNotNull { doc ->
             val id = doc.getString("id") ?: doc.id
             val invNum = doc.getString("invoiceNumber") ?: return@mapNotNull null
+            val updated = doc.getLong("last_updated") ?: doc.getLong("issueDate") ?: System.currentTimeMillis()
+            if (updated > maxSeenTimestamp) maxSeenTimestamp = updated
             InvoiceEntity(
                 id = id,
                 invoiceNumber = invNum,
@@ -800,12 +933,9 @@ fun pushBusinessDetails() {
                 status = doc.getString("status") ?: InvoiceEntity.STATUS_UNPAID,
                 notes = doc.getString("notes") ?: "",
                 imagePath = doc.getString("imagePath") ?: "",
-                lastUpdated = doc.getLong("last_updated") ?: doc.getLong("issueDate") ?: System.currentTimeMillis()
+                lastUpdated = updated
             )
         }.associateBy { it.id }
-
-        val localList = dao.getAllInvoicesList()
-        val localMap = localList.associateBy { it.id }
 
         val toInsertLocally = mutableListOf<InvoiceEntity>()
         for ((id, remote) in remoteMap) {
@@ -818,14 +948,51 @@ fun pushBusinessDetails() {
             dao.insertInvoices(toInsertLocally)
         }
 
-        var pushed = 0
-        for ((id, local) in localMap) {
-            val remote = remoteMap[id]
-            if (remote == null || local.lastUpdated > remote.lastUpdated) {
-                pushInvoiceToFirestore(collection, local)
-                pushed++
+        val dirtyIds = prefs.getDirtyRecordIds(colKey)
+        val toPush = localList.filter { local ->
+            val remote = remoteMap[local.id]
+            if (watermark == 0L) {
+                remote == null || local.lastUpdated > remote.lastUpdated
+            } else {
+                (local.id in dirtyIds || local.lastUpdated > watermark) &&
+                    (remote == null || local.lastUpdated > remote.lastUpdated)
             }
         }
+
+        var pushed = 0
+        if (toPush.isNotEmpty()) {
+            for (chunk in toPush.chunked(400)) {
+                val batch = firestore.batch()
+                for (inv in chunk) {
+                    val map = hashMapOf<String, Any>(
+                        "id" to inv.id,
+                        "invoiceNumber" to inv.invoiceNumber,
+                        "customerId" to inv.customerId,
+                        "customerName" to inv.customerName,
+                        "issueDate" to inv.issueDate,
+                        "dueDate" to inv.dueDate,
+                        "itemsJson" to inv.itemsJson,
+                        "subtotal" to inv.subtotal,
+                        "taxAmount" to inv.taxAmount,
+                        "discountAmount" to inv.discountAmount,
+                        "totalAmount" to inv.totalAmount,
+                        "paidAmount" to inv.paidAmount,
+                        "status" to inv.status,
+                        "notes" to inv.notes,
+                        "imagePath" to inv.imagePath,
+                        "last_updated" to inv.lastUpdated
+                    )
+                    batch.set(collection.document(inv.id), map, SetOptions.merge())
+                    if (inv.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = inv.lastUpdated
+                }
+                FirebaseAuthManager.awaitTask { batch.commit() }
+                prefs.clearCollectionDirty(colKey, chunk.map { it.id })
+                pushed += chunk.size
+            }
+        }
+
+        val finalWatermark = maxOf(maxSeenTimestamp, localList.maxOfOrNull { it.lastUpdated } ?: 0L, System.currentTimeMillis() - 1000L)
+        prefs.setCollectionWatermark(colKey, finalWatermark)
         return toInsertLocally.size + pushed
     }
 
@@ -834,6 +1001,7 @@ fun pushBusinessDetails() {
     // ==========================================
 
     fun pushCustomer(customer: CustomerEntity) {
+        prefs.markRecordDirty("customers", customer.id)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -841,6 +1009,8 @@ fun pushBusinessDetails() {
                 indicateSyncing()
                 val col = firestore.collection("users").document(user.uid).collection("customers")
                 pushCustomerToFirestore(col, customer)
+                prefs.clearRecordDirty("customers", customer.id)
+                prefs.setCollectionWatermark("customers", customer.lastUpdated)
                 indicateSynced()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed pushing customer: ${e.message}")
@@ -850,6 +1020,7 @@ fun pushBusinessDetails() {
     }
 
     fun deleteCustomer(customerId: String) {
+        prefs.clearRecordDirty("customers", customerId)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -866,49 +1037,26 @@ fun pushBusinessDetails() {
     }
 
     fun pushTransaction(transaction: TransactionEntity) {
+        prefs.markRecordDirty("transactions", transaction.id)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
-        
-        indicateSyncing()
-        val col = firestore.collection("users").document(user.uid).collection("transactions")
-        
-        val isoDate = com.example.ui.Formatters.toLocalDateTimeString(transaction.date)
-        
-        val safeQuantity = if (transaction.quantity.isNaN() || transaction.quantity.isInfinite()) 0.0 else transaction.quantity
-        val safeRate = if (transaction.rate.isNaN() || transaction.rate.isInfinite()) 0.0 else transaction.rate
-        val safeSubtotal = if (transaction.subtotal.isNaN() || transaction.subtotal.isInfinite()) 0.0 else transaction.subtotal
-        
-        val map = hashMapOf<String, Any>(
-            "id" to transaction.id,
-            "customerId" to transaction.customerId,
-            "amount" to transaction.amount,
-            "type" to transaction.type,
-            "description" to transaction.description,
-            "date" to transaction.date,
-            "dateIso" to isoDate,
-            "serverTimestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
-            "invoiceRef" to transaction.invoiceRef,
-            "paymentMethod" to transaction.paymentMethod,
-            "status" to transaction.status,
-            "last_updated" to transaction.lastUpdated,
-            "quantity" to safeQuantity,
-            "rate" to safeRate,
-            "subtotal" to safeSubtotal
-        )
-        
-        col.document(transaction.id).set(map, SetOptions.merge())
-            .addOnSuccessListener {
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val col = firestore.collection("users").document(user.uid).collection("transactions")
+                pushTransactionToFirestore(col, transaction)
+                prefs.clearRecordDirty("transactions", transaction.id)
+                prefs.setCollectionWatermark("transactions", transaction.lastUpdated)
                 indicateSynced()
-                android.widget.Toast.makeText(context, "Added Successfully", android.widget.Toast.LENGTH_SHORT).show()
-            }
-            .addOnFailureListener { e ->
+            } catch (e: Exception) {
                 Log.w(TAG, "Failed pushing transaction: ${e.message}")
                 indicateOfflineOrFallback()
-                android.widget.Toast.makeText(context, "Write failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
+        }
     }
 
     fun deleteTransaction(transactionId: String) {
+        prefs.clearRecordDirty("transactions", transactionId)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -925,6 +1073,7 @@ fun pushBusinessDetails() {
     }
 
     fun pushRateItem(rateItem: RateItemEntity) {
+        prefs.markRecordDirty("rate_items", rateItem.id)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -933,6 +1082,8 @@ fun pushBusinessDetails() {
                 val itemsCol = firestore.collection("users").document(user.uid).collection("items")
                 val rateItemsCol = firestore.collection("users").document(user.uid).collection("rate_items")
                 pushRateItemToFirestore(itemsCol, rateItemsCol, rateItem)
+                prefs.clearRecordDirty("rate_items", rateItem.id)
+                prefs.setCollectionWatermark("rate_items", rateItem.lastUpdated)
                 indicateSynced()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed pushing rate item: ${e.message}")
@@ -945,6 +1096,7 @@ fun pushBusinessDetails() {
     fun addItem(rateItem: RateItemEntity) = pushRateItem(rateItem)
 
     fun deleteRateItem(rateItemId: String) {
+        prefs.clearRecordDirty("rate_items", rateItemId)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         val cleanId = rateItemId.replace("/", "_").replace("\\", "_").trim()
@@ -965,6 +1117,7 @@ fun pushBusinessDetails() {
     }
 
     fun pushInvoice(invoice: InvoiceEntity) {
+        prefs.markRecordDirty("invoices", invoice.id)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -972,6 +1125,8 @@ fun pushBusinessDetails() {
                 indicateSyncing()
                 val col = firestore.collection("users").document(user.uid).collection("invoices")
                 pushInvoiceToFirestore(col, invoice)
+                prefs.clearRecordDirty("invoices", invoice.id)
+                prefs.setCollectionWatermark("invoices", invoice.lastUpdated)
                 indicateSynced()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed pushing invoice: ${e.message}")
@@ -981,6 +1136,7 @@ fun pushBusinessDetails() {
     }
 
     fun deleteInvoice(invoiceId: String) {
+        prefs.clearRecordDirty("invoices", invoiceId)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -1018,15 +1174,30 @@ fun pushBusinessDetails() {
     }
 
     private suspend fun syncNotes(firestore: FirebaseFirestore, uid: String): Int {
+        val colKey = "notes"
         val collection = firestore.collection("users").document(uid).collection("notes")
+        val localList = dao.getAllNotesList()
+        val localMap = localList.associateBy { it.id }
+        val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
+
         val snapshot = try {
-            FirebaseAuthManager.awaitTask { collection.get() }
+            FirebaseAuthManager.awaitTask {
+                if (watermark > 0L) {
+                    collection.whereGreaterThan("last_updated", watermark).get()
+                } else {
+                    collection.get()
+                }
+            }
         } catch (_: Exception) {
             return 0
         }
-        val remoteMap = snapshot.documents.mapNotNull { docToNote(it) }.associateBy { it.id }
-        val localList = dao.getAllNotesList()
-        val localMap = localList.associateBy { it.id }
+
+        var maxSeenTimestamp = watermark
+        val remoteMap = snapshot.documents.mapNotNull { doc ->
+            docToNote(doc)?.also { n ->
+                if (n.updatedAt > maxSeenTimestamp) maxSeenTimestamp = n.updatedAt
+            }
+        }.associateBy { it.id }
 
         val toInsertLocally = mutableListOf<NoteEntity>()
         for ((id, remote) in remoteMap) {
@@ -1040,14 +1211,51 @@ fun pushBusinessDetails() {
             com.example.notes.NoteReminderScheduler.rescheduleAllFutureReminders(context, toInsertLocally)
         }
 
-        var pushed = 0
-        for ((id, local) in localMap) {
-            val remote = remoteMap[id]
-            if (remote == null || local.updatedAt > remote.updatedAt) {
-                pushNoteToFirestore(collection, local)
-                pushed++
+        val dirtyIds = prefs.getDirtyRecordIds(colKey)
+        val toPush = localList.filter { local ->
+            val remote = remoteMap[local.id]
+            if (watermark == 0L) {
+                remote == null || local.updatedAt > remote.updatedAt
+            } else {
+                (local.id in dirtyIds || local.updatedAt > watermark) &&
+                    (remote == null || local.updatedAt > remote.updatedAt)
             }
         }
+
+        var pushed = 0
+        if (toPush.isNotEmpty()) {
+            for (chunk in toPush.chunked(400)) {
+                val batch = firestore.batch()
+                for (note in chunk) {
+                    val cleanId = note.id.replace("/", "_").trim()
+                    if (cleanId.isNotBlank()) {
+                        val map = hashMapOf<String, Any>(
+                            "id" to cleanId,
+                            "text" to note.text,
+                            "label" to note.label,
+                            "isChecklist" to note.isChecklist,
+                            "checklistJson" to note.checklistJson,
+                            "isPinned" to note.isPinned,
+                            "isDone" to note.isDone,
+                            "linkedCustomerId" to note.linkedCustomerId,
+                            "linkedCustomerName" to note.linkedCustomerName,
+                            "reminderTime" to note.reminderTime,
+                            "createdAt" to note.createdAt,
+                            "updatedAt" to note.updatedAt,
+                            "last_updated" to note.updatedAt
+                        )
+                        batch.set(collection.document(cleanId), map, SetOptions.merge())
+                        if (note.updatedAt > maxSeenTimestamp) maxSeenTimestamp = note.updatedAt
+                    }
+                }
+                FirebaseAuthManager.awaitTask { batch.commit() }
+                prefs.clearCollectionDirty(colKey, chunk.map { it.id })
+                pushed += chunk.size
+            }
+        }
+
+        val finalWatermark = maxOf(maxSeenTimestamp, localList.maxOfOrNull { it.updatedAt } ?: 0L, System.currentTimeMillis() - 1000L)
+        prefs.setCollectionWatermark(colKey, finalWatermark)
         return toInsertLocally.size + pushed
     }
 
@@ -1108,6 +1316,7 @@ fun pushBusinessDetails() {
     }
 
     fun pushNote(note: NoteEntity) {
+        prefs.markRecordDirty("notes", note.id)
         val user = authManager.currentUser.value ?: return
         val firestore = getFirestore() ?: return
         syncScope.launch {
@@ -1115,6 +1324,8 @@ fun pushBusinessDetails() {
                 indicateSyncing()
                 val col = firestore.collection("users").document(user.uid).collection("notes")
                 pushNoteToFirestore(col, note)
+                prefs.clearRecordDirty("notes", note.id)
+                prefs.setCollectionWatermark("notes", note.updatedAt)
                 indicateSynced()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed pushing note: ${e.message}")
@@ -1405,26 +1616,28 @@ fun pushBusinessDetails() {
         val count = pendingCount.incrementAndGet()
         _syncState.value = _syncState.value.copy(
             status = SyncStatus.SYNCING,
-            pendingPushCount = count
+            pendingPushCount = maxOf(count, prefs.getTotalDirtyRecordCount())
         )
     }
 
     private fun indicateSynced() {
-        val count = pendingCount.decrementAndGet()
+        val count = pendingCount.decrementAndGet().coerceAtLeast(0)
         val now = System.currentTimeMillis()
         prefs.lastSyncTimestamp = now
+        val dirtyLeft = prefs.getTotalDirtyRecordCount()
         _syncState.value = _syncState.value.copy(
             status = if (count <= 0) SyncStatus.SYNCED else SyncStatus.SYNCING,
-            pendingPushCount = Math.max(0, count),
+            pendingPushCount = maxOf(count, dirtyLeft),
             lastSyncTimestamp = now
         )
     }
 
     private fun indicateOfflineOrFallback() {
-        val count = pendingCount.decrementAndGet()
+        val count = pendingCount.decrementAndGet().coerceAtLeast(0)
+        val dirtyLeft = prefs.getTotalDirtyRecordCount()
         _syncState.value = _syncState.value.copy(
             status = if (!isNetworkAvailable()) SyncStatus.OFFLINE else SyncStatus.SYNCED,
-            pendingPushCount = Math.max(0, count)
+            pendingPushCount = maxOf(count, dirtyLeft)
         )
     }
 }

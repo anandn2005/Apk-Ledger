@@ -231,89 +231,128 @@ fun ReceiptPreviewDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Bottom Action(s)
-                if (onRecordPaymentClick != null && receipt.isDue) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(
+                // Bottom Action(s): Record Payment (if due) + WhatsApp Image + PDF + Share
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (onRecordPaymentClick != null && receipt.isDue) {
+                        Button(
                             onClick = onRecordPaymentClick,
                             modifier = Modifier
-                                .weight(1f)
-                                .height(52.dp)
+                                .fillMaxWidth()
+                                .height(46.dp)
                                 .testTag("receipt_record_payment_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.5.dp, com.example.ui.theme.CreditGreen),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = com.example.ui.theme.CreditGreen
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = com.example.ui.theme.CreditGreen,
+                                contentColor = Color.White
                             )
                         ) {
                             Text(
-                                text = "Record Payment",
+                                text = "Record Payment Received",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.5.sp,
+                                fontSize = 14.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. Direct WhatsApp Image Share
+                        Button(
+                            onClick = {
+                                ReceiptGenerator.generateAndShareReceipt(context, receipt, preferWhatsApp = true)
+                            },
+                            modifier = Modifier
+                                .weight(1.15f)
+                                .height(50.dp)
+                                .testTag("whatsapp_receipt_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF25D366),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "WhatsApp",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
                                 maxLines = 1
                             )
                         }
 
+                        // 2. Share PDF via FileProvider
                         Button(
                             onClick = {
-                                ReceiptGenerator.generateAndShareReceipt(context, receipt)
+                                ReceiptGenerator.generateAndShareReceiptPdf(context, receipt, preferWhatsApp = false)
+                            },
+                            modifier = Modifier
+                                .weight(0.95f)
+                                .height(50.dp)
+                                .testTag("pdf_receipt_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1E293B),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Receipt,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "PDF",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                maxLines = 1
+                            )
+                        }
+
+                        // 3. Share Image via FileProvider
+                        Button(
+                            onClick = {
+                                ReceiptGenerator.generateAndShareReceipt(context, receipt, preferWhatsApp = false)
                             },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(52.dp)
+                                .height(50.dp)
                                 .testTag("share_receipt_button"),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color.White,
                                 contentColor = Color(0xFF0F172A)
                             ),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
                             elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,
                                 contentDescription = null,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "Share Receipt",
+                                text = "Image",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                fontSize = 13.sp,
+                                maxLines = 1
                             )
                         }
-                    }
-                } else {
-                    // Single Primary Action: Share Receipt Button anchored at bottom
-                    Button(
-                        onClick = {
-                            ReceiptGenerator.generateAndShareReceipt(context, receipt)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(54.dp)
-                            .testTag("share_receipt_button"),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color(0xFF0F172A)
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Share Receipt",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
-                        )
                     }
                 }
             }
