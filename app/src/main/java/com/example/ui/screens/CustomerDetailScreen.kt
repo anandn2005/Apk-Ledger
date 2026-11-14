@@ -54,14 +54,21 @@ import com.example.ui.components.ReceiptPreviewDialog
 import com.example.ui.components.ScrollEdgeShadow
 import com.example.ui.components.rememberCanScrollBack
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.example.ui.theme.*
 import com.example.ui.utils.ReceiptData
 import com.example.ui.utils.ReceiptGenerator
 import com.example.ui.utils.StatementImageGenerator
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun CustomerDetailScreen(
     customerWithBalance: CustomerWithBalance,
@@ -78,7 +85,16 @@ fun CustomerDetailScreen(
     onDeleteTransaction: (TransactionEntity) -> Unit,
     onUpdateCustomer: (CustomerEntity) -> Unit = {},
     onDeleteSelectedTransactions: (List<TransactionEntity>) -> Unit,
-    onDeleteCustomer: (String) -> Unit
+    onDeleteCustomer: (String) -> Unit,
+    onMergeTransactions: (
+        customerId: String,
+        transactionsToMerge: List<TransactionEntity>,
+        combineIntoSingleNetEntry: Boolean,
+        customDescription: String,
+        mergeDateTimestamp: Long
+    ) -> Unit = { _, _, _, _, _ -> },
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val customer = customerWithBalance.customer
     val netBalance = customerWithBalance.netBalance
@@ -91,8 +107,16 @@ fun CustomerDetailScreen(
     var editingTxn by remember { mutableStateOf<TransactionEntity?>(null) }
     var selectedTxnIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var previewReceiptData by remember { mutableStateOf<ReceiptData?>(null) }
+    var mergeCandidates by remember { mutableStateOf<List<TransactionEntity>?>(null) }
+    var mergeDefaultOldOnly by remember { mutableStateOf(false) }
 
     val isSelectionMode = selectedTxnIds.isNotEmpty()
+    val thirtyDaysAgoMs = remember(transactions.size) {
+        System.currentTimeMillis() - (30L * 24L * 3600L * 1000L)
+    }
+    val oldTransactions = remember(transactions, thirtyDaysAgoMs) {
+        transactions.filter { it.date <= thirtyDaysAgoMs }
+    }
 
     val listState = rememberLazyListState()
     val invoicesMap = remember(invoices) {
@@ -111,15 +135,20 @@ fun CustomerDetailScreen(
         snackbarHost = {
             SnackbarHost(
                 hostState = snackbarHostState,
-                modifier = Modifier.padding(bottom = 70.dp)
+                modifier = Modifier.padding(bottom = 78.dp, start = 16.dp, end = 16.dp)
             ) { data ->
-                Snackbar(
-                    snackbarData = data,
-                    containerColor = MaterialTheme.colorScheme.inverseSurface,
-                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                    actionColor = CreditGreen,
-                    shape = RoundedCornerShape(14.dp)
-                )
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    UnifiedToastBanner(
+                        message = data.visuals.message,
+                        actionLabel = data.visuals.actionLabel,
+                        onActionClick = if (data.visuals.actionLabel != null) {
+                            { data.performAction() }
+                        } else null
+                    )
+                }
             }
         },
         topBar = {
@@ -134,8 +163,32 @@ fun CustomerDetailScreen(
                         }
                     },
                     actions = {
+                        if (selectedTxnIds.size >= 2) {
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    val selectedList = transactions.filter { selectedTxnIds.contains(it.id) }
+                                    if (selectedList.size >= 2) {
+                                        mergeDefaultOldOnly = false
+                                        mergeCandidates = selectedList
+                                    }
+                                },
+                                modifier = Modifier.testTag("merge_selected_txns_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.CallMerge,
+                                    contentDescription = "Merge Selected Transactions",
+                                    tint = CreditGreen
+                                )
+                            }
+                        }
+
                         IconButton(onClick = {
-                            selectedTxnIds = transactions.map { it.id }.toSet()
+                            selectedTxnIds = if (selectedTxnIds.size == transactions.size) {
+                                emptySet()
+                            } else {
+                                transactions.map { it.id }.toSet()
+                            }
                         }) {
                             Icon(Icons.Default.SelectAll, contentDescription = "Select All")
                         }
@@ -369,12 +422,59 @@ fun CustomerDetailScreen(
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
 
+                val (avatarBg, avatarFg) = remember(customer.name, isDark) {
+                    com.example.feature.customers.CustomersViewModel.avatarColorsForName(customer.name, isDark)
+                }
+                val avatarInitial = remember(customer.name) {
+                    customer.name.trim().take(1).uppercase().ifBlank { "C" }
+                }
+
+                val cardSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                    with(sharedTransitionScope) {
+                        Modifier.sharedBounds(
+                            sharedContentState = rememberSharedContentState(key = "customer_card_${customer.id}"),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+                        )
+                    }
+                } else Modifier
+
+                val avatarSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                    with(sharedTransitionScope) {
+                        Modifier.sharedElement(
+                            state = rememberSharedContentState(key = "customer_avatar_${customer.id}"),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+                        )
+                    }
+                } else Modifier
+
+                val nameSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                    with(sharedTransitionScope) {
+                        Modifier.sharedBounds(
+                            sharedContentState = rememberSharedContentState(key = "customer_name_${customer.id}"),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+                        )
+                    }
+                } else Modifier
+
+                val balanceSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                    with(sharedTransitionScope) {
+                        Modifier.sharedBounds(
+                            sharedContentState = rememberSharedContentState(key = "customer_balance_${customer.id}"),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+                        )
+                    }
+                } else Modifier
+
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = cardBg),
                     border = BorderStroke(width = 1.dp, color = cardBorder),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = cardSharedModifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier
@@ -386,17 +486,39 @@ fun CustomerDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = customer.name,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isDark) Color(0xFFF4F4F5) else Color(0xFF1C1C1E),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 modifier = Modifier
                                     .weight(1f, fill = false)
                                     .padding(end = 8.dp)
-                            )
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = avatarBg,
+                                    border = BorderStroke(1.dp, avatarFg.copy(alpha = 0.25f)),
+                                    modifier = avatarSharedModifier.size(38.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = avatarInitial,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = avatarFg
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = customer.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDark) Color(0xFFF4F4F5) else Color(0xFF1C1C1E),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = nameSharedModifier
+                                )
+                            }
 
                             Surface(
                                 shape = CircleShape,
@@ -436,7 +558,8 @@ fun CustomerDetailScreen(
                                 netBalance > 0 -> if (isDark) StatusEmerald else CreditGreenDark
                                 netBalance < 0 -> if (isDark) StatusRed else DebitRedDark
                                 else -> MaterialTheme.colorScheme.onSurface
-                            }
+                            },
+                            modifier = balanceSharedModifier
                         )
 
                         if (customer.area.isNotBlank()) {
@@ -519,12 +642,56 @@ fun CustomerDetailScreen(
             }
 
             item(key = "transactions_section_header", contentType = "section_header") {
-                Text(
-                    text = "Transactions",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Transactions (${transactions.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    if (transactions.size >= 2) {
+                        val hasOld = oldTransactions.size >= 2
+                        Surface(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                mergeDefaultOldOnly = hasOld
+                                mergeCandidates = if (hasOld) oldTransactions else transactions
+                            },
+                            shape = RoundedCornerShape(50),
+                            color = if (hasOld) StatusEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (hasOld) StatusEmerald.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                            ),
+                            modifier = Modifier.testTag("compact_merge_txns_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CallMerge,
+                                    contentDescription = "Merge older transactions",
+                                    tint = if (hasOld) StatusEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = if (hasOld) "Compact 30d+ (${oldTransactions.size})" else "Merge",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (hasOld) CreditGreenDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (transactions.isEmpty()) {
@@ -686,6 +853,29 @@ fun CustomerDetailScreen(
         ReceiptPreviewDialog(
             receipt = previewReceiptData!!,
             onDismiss = { previewReceiptData = null }
+        )
+    }
+
+    val activeMergeList = mergeCandidates
+    if (activeMergeList != null && activeMergeList.size >= 2) {
+        MergeTransactionsDialog(
+            allCustomerTransactions = transactions,
+            initialCandidates = activeMergeList,
+            oldTransactionsCount = oldTransactions.size,
+            initialOldOnly = mergeDefaultOldOnly,
+            currencySymbol = currencySymbol,
+            onDismiss = { mergeCandidates = null },
+            onConfirmMerge = { txnsToMerge, combineIntoSingleNet, description, mergeDateTs ->
+                onMergeTransactions(
+                    customer.id,
+                    txnsToMerge,
+                    combineIntoSingleNet,
+                    description,
+                    mergeDateTs
+                )
+                selectedTxnIds = emptySet()
+                mergeCandidates = null
+            }
         )
     }
 }
@@ -1007,4 +1197,518 @@ fun SoftCircularActionButton(
         )
     }
 }
+
+private enum class MergeScopeFilter {
+    DEBITS_ONLY,
+    ALL_TYPES,
+    CREDITS_ONLY
+}
+
+@Composable
+private fun MergeTransactionsDialog(
+    allCustomerTransactions: List<TransactionEntity>,
+    initialCandidates: List<TransactionEntity>,
+    oldTransactionsCount: Int,
+    initialOldOnly: Boolean,
+    currencySymbol: String,
+    onDismiss: () -> Unit,
+    onConfirmMerge: (
+        txnsToMerge: List<TransactionEntity>,
+        combineIntoSingleNet: Boolean,
+        description: String,
+        mergeDateTs: Long
+    ) -> Unit
+) {
+    val isDark = isAppInDarkTheme()
+    val haptic = LocalHapticFeedback.current
+    val thirtyDaysAgoMs = remember { System.currentTimeMillis() - (30L * 24L * 3600L * 1000L) }
+
+    // If opened from selection, keep user's selection as base pool; if opened from header pill, allow toggling 30d+ vs all
+    val openedFromAllOrOld = initialCandidates.size == allCustomerTransactions.size ||
+        (oldTransactionsCount >= 2 && initialOldOnly)
+    var filterOldOnly by remember { mutableStateOf(initialOldOnly) }
+
+    val basePool = remember(filterOldOnly, initialCandidates, allCustomerTransactions, openedFromAllOrOld) {
+        if (!openedFromAllOrOld) {
+            initialCandidates
+        } else if (filterOldOnly) {
+            val old = allCustomerTransactions.filter { it.date <= thirtyDaysAgoMs }
+            if (old.size >= 2) old else initialCandidates
+        } else {
+            allCustomerTransactions
+        }
+    }
+
+    val poolDebits = remember(basePool) {
+        basePool.filter { it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name }
+    }
+    val poolCredits = remember(basePool) {
+        basePool.filter { it.type == TransactionType.GOT_PAYMENT.name }
+    }
+
+    var scopeFilter by remember(basePool) {
+        mutableStateOf(
+            when {
+                poolDebits.size >= 2 && poolCredits.size == 1 -> MergeScopeFilter.DEBITS_ONLY
+                poolDebits.size >= 2 && poolCredits.isEmpty() -> MergeScopeFilter.DEBITS_ONLY
+                poolCredits.size >= 2 && poolDebits.isEmpty() -> MergeScopeFilter.CREDITS_ONLY
+                else -> MergeScopeFilter.ALL_TYPES
+            }
+        )
+    }
+
+    val activeList = remember(basePool, poolDebits, poolCredits, scopeFilter) {
+        when (scopeFilter) {
+            MergeScopeFilter.DEBITS_ONLY -> poolDebits
+            MergeScopeFilter.CREDITS_ONLY -> poolCredits
+            MergeScopeFilter.ALL_TYPES -> basePool
+        }
+    }
+
+    val activeDebits = remember(activeList) {
+        activeList.filter { it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name }
+    }
+    val activeCredits = remember(activeList) {
+        activeList.filter { it.type == TransactionType.GOT_PAYMENT.name }
+    }
+    val hasBothTypes = activeDebits.isNotEmpty() && activeCredits.isNotEmpty()
+
+    var combineSingleNet by remember(hasBothTypes, activeList.size) {
+        mutableStateOf(hasBothTypes && activeList.size == 2)
+    }
+    // Separate mode requires at least 3 rows when both types exist, otherwise 2 rows -> 2 rows saves 0 space
+    val canKeepSeparate = !hasBothTypes || activeList.size >= 3
+    val effectiveSingleNet = combineSingleNet || (hasBothTypes && !canKeepSeparate)
+
+    val debitSum = remember(activeDebits) { activeDebits.sumOf { it.amount } }
+    val creditSum = remember(activeCredits) { activeCredits.sumOf { it.amount } }
+    val netAmount = debitSum - creditSum
+
+    val resultingRowCount = remember(activeDebits.size, activeCredits.size, effectiveSingleNet) {
+        if (effectiveSingleNet) 1
+        else (if (activeDebits.isNotEmpty()) 1 else 0) + (if (activeCredits.isNotEmpty()) 1 else 0)
+    }
+
+    val dateSpanLabel = remember(activeList) {
+        if (activeList.isEmpty()) "" else {
+            val sdf = SimpleDateFormat("dd MMM", Locale.getDefault())
+            val minD = activeList.minOf { it.date }
+            val maxD = activeList.maxOf { it.date }
+            val s1 = sdf.format(Date(minD))
+            val s2 = sdf.format(Date(maxD))
+            if (s1 == s2) s1 else "$s1 – $s2"
+        }
+    }
+
+    val autoDescription = remember(activeDebits.size, activeCredits.size, dateSpanLabel) {
+        val parts = buildList {
+            if (activeDebits.isNotEmpty()) add("${activeDebits.size} debit${if (activeDebits.size > 1) "s" else ""}")
+            if (activeCredits.isNotEmpty()) add("${activeCredits.size} credit${if (activeCredits.size > 1) "s" else ""}")
+        }.joinToString(" & ")
+        if (dateSpanLabel.isNotBlank()) "Merged $parts ($dateSpanLabel)" else "Merged $parts"
+    }
+
+    var customDescription by remember(autoDescription) { mutableStateOf(autoDescription) }
+    val mergeTimestamp = remember(activeList) {
+        activeList.maxOfOrNull { it.date } ?: System.currentTimeMillis()
+    }
+    val isValidMerge = activeList.size >= 2 && resultingRowCount in 1 until activeList.size
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = if (isDark) Color(0xFF1C1C1E) else Color.White,
+            border = BorderStroke(1.dp, if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E7EB)),
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .widthIn(max = 500.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = StatusEmerald.copy(alpha = 0.14f),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.CallMerge,
+                                    contentDescription = null,
+                                    tint = StatusEmerald,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = "Merge Transactions",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Compact older rows with exact balance",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                // Optional 30+ Days Filter Toggle when opened from section header
+                if (openedFromAllOrOld && oldTransactionsCount >= 2 && allCustomerTransactions.size > oldTransactionsCount) {
+                    Surface(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            filterOldOnly = !filterOldOnly
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (filterOldOnly) StatusEmerald.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (filterOldOnly) StatusEmerald.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = if (filterOldOnly) StatusEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "30+ days old only ($oldTransactionsCount)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            Switch(
+                                checked = filterOldOnly,
+                                onCheckedChange = { filterOldOnly = it }
+                            )
+                        }
+                    }
+                }
+
+                // Scope Chips (Debits Only / All / Credits Only)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "ENTRIES TO INCLUDE",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.7.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (poolDebits.size >= 2) {
+                            val selected = scopeFilter == MergeScopeFilter.DEBITS_ONLY
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    scopeFilter = MergeScopeFilter.DEBITS_ONLY
+                                },
+                                label = { Text("Debits (${poolDebits.size})", fontSize = 12.sp) },
+                                modifier = Modifier.testTag("merge_scope_debits")
+                            )
+                        }
+                        if (poolDebits.isNotEmpty() && poolCredits.isNotEmpty()) {
+                            val selected = scopeFilter == MergeScopeFilter.ALL_TYPES
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    scopeFilter = MergeScopeFilter.ALL_TYPES
+                                },
+                                label = { Text("Debits + Credits (${basePool.size})", fontSize = 12.sp) },
+                                modifier = Modifier.testTag("merge_scope_all")
+                            )
+                        }
+                        if (poolCredits.size >= 2) {
+                            val selected = scopeFilter == MergeScopeFilter.CREDITS_ONLY
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    scopeFilter = MergeScopeFilter.CREDITS_ONLY
+                                },
+                                label = { Text("Credits (${poolCredits.size})", fontSize = 12.sp) },
+                                modifier = Modifier.testTag("merge_scope_credits")
+                            )
+                        }
+                    }
+                }
+
+                // Output Mode (when both debits and credits are included)
+                if (hasBothTypes) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "MERGE FORMAT",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.7.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (canKeepSeparate) {
+                                Surface(
+                                    onClick = { combineSingleNet = false },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (!effectiveSingleNet) StatusEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (!effectiveSingleNet) StatusEmerald else Color.Transparent
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Text(
+                                            text = "Separate (2 rows)",
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (!effectiveSingleNet) CreditGreenDark else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "1 Debit + 1 Credit",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            Surface(
+                                onClick = { combineSingleNet = true },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (effectiveSingleNet) StatusEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (effectiveSingleNet) StatusEmerald else Color.Transparent
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("merge_mode_single_net")
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Single Net (1 row)",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (effectiveSingleNet) CreditGreenDark else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Debits minus Credits",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Live Before -> After Balance Preview Card
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isDark) Color(0xFF141B17) else Color(0xFFF0FDF4),
+                    border = BorderStroke(1.dp, StatusEmerald.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${activeList.size} entries → $resultingRowCount entry",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isDark) StatusEmerald else CreditGreenDark
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = StatusEmerald.copy(alpha = 0.16f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Verified,
+                                        contentDescription = null,
+                                        tint = StatusEmerald,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = "Exact Balance",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isDark) StatusEmerald else CreditGreenDark
+                                    )
+                                }
+                            }
+                        }
+
+                        if (activeDebits.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Debits (${activeDebits.size})",
+                                    fontSize = 12.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = Formatters.formatCurrency(debitSum, currencySymbol),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = DebitRed
+                                )
+                            }
+                        }
+
+                        if (activeCredits.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Credits (${activeCredits.size})",
+                                    fontSize = 12.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = Formatters.formatCurrency(creditSum, currencySymbol),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = CreditGreen
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = StatusEmerald.copy(alpha = 0.2f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Net Impact",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${if (netAmount >= 0) "+" else "-"}${Formatters.formatCurrency(Math.abs(netAmount), currencySymbol)} ${if (netAmount > 0.005) "(Due)" else if (netAmount < -0.005) "(Credit)" else "(Settled)"}",
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (netAmount > 0.005) DebitRed else CreditGreen
+                            )
+                        }
+                    }
+                }
+
+                // Editable Summary Note
+                OutlinedTextField(
+                    value = customDescription,
+                    onValueChange = { customDescription = it },
+                    label = { Text("Summary Note") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("merge_summary_note_input")
+                )
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onConfirmMerge(
+                                activeList,
+                                effectiveSingleNet,
+                                customDescription,
+                                mergeTimestamp
+                            )
+                        },
+                        enabled = isValidMerge,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CreditGreen),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .testTag("confirm_merge_transactions_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallMerge,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Merge (${activeList.size} → $resultingRowCount)",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 

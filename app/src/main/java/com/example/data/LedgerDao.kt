@@ -59,6 +59,19 @@ interface LedgerDao {
     @Query("DELETE FROM transactions WHERE customerId = :customerId")
     suspend fun deleteTransactionsForCustomer(customerId: String)
 
+    @Transaction
+    suspend fun replaceTransactions(
+        deleteIds: List<String>,
+        insertTxns: List<TransactionEntity>
+    ) {
+        if (deleteIds.isNotEmpty()) {
+            deleteTransactionsByIds(deleteIds)
+        }
+        if (insertTxns.isNotEmpty()) {
+            insertTransactions(insertTxns)
+        }
+    }
+
     @Query("SELECT * FROM transactions WHERE date >= :startDate AND date <= :endDate ORDER BY date DESC")
     suspend fun getTransactionsForDateRange(startDate: Long, endDate: Long): List<TransactionEntity>
 

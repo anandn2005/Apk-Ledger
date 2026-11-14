@@ -248,7 +248,50 @@ fun NotesSheetScreen(
         label = "collapsedHeaderAlpha"
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    @OptIn(ExperimentalSharedTransitionApi::class)
+    SharedTransitionLayout(modifier = Modifier.fillMaxSize()) {
+        val sharedTransitionScope = this
+        AnimatedContent(
+            targetState = activeEditorSession,
+            transitionSpec = {
+                if (targetState != null) {
+                    (fadeIn(animationSpec = tween(220)) +
+                        scaleIn(
+                            initialScale = 0.96f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            )
+                        )).togetherWith(fadeOut(animationSpec = tween(180)))
+                } else {
+                    fadeIn(animationSpec = tween(200)).togetherWith(
+                        fadeOut(animationSpec = tween(180)) +
+                            scaleOut(targetScale = 0.96f, animationSpec = tween(180))
+                    )
+                }
+            },
+            label = "NotesSharedTransition"
+        ) { session ->
+            val animatedVisibilityScope = this
+            if (session != null) {
+                NoteEditorScreen(
+                    initialNote = session.note,
+                    isNewNote = session.isNew,
+                    customers = customers,
+                    customLabels = customLabels,
+                    onAutoSave = { updated ->
+                        onSaveNote(updated)
+                    },
+                    onAddCustomLabel = onAddCustomLabel,
+                    onDeleteCustomLabel = onDeleteCustomLabel,
+                    onClose = { finalNote ->
+                        onSaveNote(finalNote)
+                        activeEditorSession = null
+                    },
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope
+                )
+            } else {
         Scaffold(
             containerColor = sheetBg,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -713,6 +756,8 @@ fun NotesSheetScreen(
                                                     textSecondary = textSecondary,
                                                     dangerRed = dangerRed,
                                                     lang = lang,
+                                                    sharedTransitionScope = sharedTransitionScope,
+                                                    animatedVisibilityScope = animatedVisibilityScope,
                                                     onClick = {
                                                         AppHaptics.performTap(view)
                                                         if (isSelectionMode) {
@@ -784,44 +829,12 @@ fun NotesSheetScreen(
                 }
             }
         }
-
-        // Smooth transition when opening a note editor from its row or "+" button
-        AnimatedVisibility(
-            visible = activeEditorSession != null,
-            enter = fadeIn(animationSpec = tween(200)) +
-                scaleIn(
-                    initialScale = 0.94f,
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMedium
-                    )
-                ),
-            exit = fadeOut(animationSpec = tween(180)) +
-                scaleOut(targetScale = 0.95f, animationSpec = tween(180))
-        ) {
-            val session = activeEditorSession
-            if (session != null) {
-                NoteEditorScreen(
-                    initialNote = session.note,
-                    isNewNote = session.isNew,
-                    customers = customers,
-                    customLabels = customLabels,
-                    onAutoSave = { updated ->
-                        onSaveNote(updated)
-                    },
-                    onAddCustomLabel = onAddCustomLabel,
-                    onDeleteCustomLabel = onDeleteCustomLabel,
-                    onClose = { finalNote ->
-                        onSaveNote(finalNote)
-                        activeEditorSession = null
-                    }
-                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SwipeableNoteRow(
     note: NoteEntity,
@@ -833,6 +846,8 @@ private fun SwipeableNoteRow(
     textSecondary: Color,
     dangerRed: Color,
     lang: AppLanguage,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onSwipePinToggle: () -> Unit,
@@ -909,8 +924,38 @@ private fun SwipeableNoteRow(
         }
         val isOverdueReminder = !note.isDone && note.reminderTime in 1L until System.currentTimeMillis()
 
+        val rowSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+            with(sharedTransitionScope) {
+                Modifier.sharedBounds(
+                    sharedContentState = rememberSharedContentState(key = "note_container_${note.id}"),
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+                )
+            }
+        } else Modifier
+
+        val titleSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+            with(sharedTransitionScope) {
+                Modifier.sharedBounds(
+                    sharedContentState = rememberSharedContentState(key = "note_title_${note.id}"),
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+                )
+            }
+        } else Modifier
+
+        val labelSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+            with(sharedTransitionScope) {
+                Modifier.sharedBounds(
+                    sharedContentState = rememberSharedContentState(key = "note_label_${note.id}"),
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+                )
+            }
+        } else Modifier
+
         Row(
-            modifier = Modifier
+            modifier = rowSharedModifier
                 .fillMaxWidth()
                 .background(rowBg)
                 .alpha(if (note.isDone) 0.58f else 1f)
@@ -948,7 +993,7 @@ private fun SwipeableNoteRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
-                        modifier = Modifier.weight(1f)
+                        modifier = titleSharedModifier.weight(1f)
                     )
 
                     Row(
@@ -1013,7 +1058,8 @@ private fun SwipeableNoteRow(
                     // Small label tag
                     Surface(
                         color = softGreenChip,
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = labelSharedModifier
                     ) {
                         Text(
                             text = AppStrings.translateNoteLabel(note.label, lang),

@@ -302,6 +302,63 @@ class LedgerRepository(
         }
     }
 
+    suspend fun mergeTransactions(
+        customerId: String,
+        sourceTransactions: List<TransactionEntity>,
+        createdTransactions: List<TransactionEntity>
+    ) {
+        if (sourceTransactions.size < 2 || createdTransactions.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val stampedCreated = createdTransactions.map { it.copy(customerId = customerId, lastUpdated = now) }
+            val sourceIds = sourceTransactions.map { it.id }
+
+            val summaryJson = JSONObject().apply {
+                put("type", "MERGE_TRANSACTIONS")
+                put("customerId", customerId)
+                put("mergedCount", sourceTransactions.size)
+                put("createdCount", stampedCreated.size)
+                put("createdAmountSum", stampedCreated.sumOf { it.amount })
+            }.toString()
+
+            dao.replaceTransactions(
+                deleteIds = sourceIds,
+                insertTxns = stampedCreated
+            )
+
+            dao.insertAuditLog(
+                AuditLogEntity(
+                    actionType = "MERGE_TRANSACTIONS",
+                    title = "Merged ${sourceTransactions.size} entries into ${stampedCreated.size}",
+                    description = stampedCreated.joinToString(" • ") { it.description.ifBlank { it.type } },
+                    detailsJson = summaryJson
+                )
+            )
+
+            sourceIds.forEach { syncManager?.deleteTransaction(it) }
+            stampedCreated.forEach { syncManager?.pushTransaction(it) }
+        }
+    }
+
+    suspend fun undoMergeTransactions(
+        originalTransactions: List<TransactionEntity>,
+        createdTransactions: List<TransactionEntity>
+    ) {
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val restoredOriginals = originalTransactions.map { it.copy(lastUpdated = now) }
+            val createdIds = createdTransactions.map { it.id }
+
+            dao.replaceTransactions(
+                deleteIds = createdIds,
+                insertTxns = restoredOriginals
+            )
+
+            createdIds.forEach { syncManager?.deleteTransaction(it) }
+            restoredOriginals.forEach { syncManager?.pushTransaction(it) }
+        }
+    }
+
     suspend fun insertInvoice(invoice: InvoiceEntity): Long {
         return withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()

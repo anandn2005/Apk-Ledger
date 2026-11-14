@@ -13,6 +13,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -78,6 +81,7 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun NoteEditorScreen(
     initialNote: NoteEntity,
@@ -87,7 +91,9 @@ fun NoteEditorScreen(
     onAutoSave: (NoteEntity) -> Unit,
     onAddCustomLabel: (String) -> String,
     onDeleteCustomLabel: (String) -> Unit,
-    onClose: (NoteEntity) -> Unit
+    onClose: (NoteEntity) -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val isDark = LocalIsDarkMode.current
     val lang = LocalAppLanguage.current
@@ -232,9 +238,40 @@ fun NoteEditorScreen(
         }
     }
 
+    val containerSharedModifier = if (!isNewNote && sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "note_container_${initialNote.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
+    val titleSharedModifier = if (!isNewNote && sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "note_title_${initialNote.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
+    val labelSharedModifier = if (!isNewNote && sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "note_label_${initialNote.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.84f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
     Scaffold(
         containerColor = bgColor,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        modifier = containerSharedModifier,
         topBar = {
             Surface(
                 color = bgColor.copy(alpha = 0.95f),
@@ -357,7 +394,7 @@ fun NoteEditorScreen(
                         Surface(
                             color = softGreenBg,
                             shape = RoundedCornerShape(50),
-                            modifier = Modifier.clickable {
+                            modifier = labelSharedModifier.clickable {
                                 AppHaptics.performTap(view)
                                 showLabelDialog = true
                             }
@@ -668,7 +705,7 @@ fun NoteEditorScreen(
                         keyboardOptions = KeyboardOptions(
                             capitalization = KeyboardCapitalization.Sentences
                         ),
-                        modifier = Modifier
+                        modifier = titleSharedModifier
                             .fillMaxWidth()
                             .defaultMinSize(minHeight = 420.dp)
                             .focusRequester(mainTextFocusRequester)
@@ -677,7 +714,7 @@ fun NoteEditorScreen(
                 }
             } else {
                 // Checklist mode: Title line at top + interactive checklist with unchecked & Completed sections
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box(modifier = titleSharedModifier.fillMaxWidth()) {
                     if (noteText.isEmpty()) {
                         Text(
                             text = AppStrings.noteTitlePlaceholder(lang),

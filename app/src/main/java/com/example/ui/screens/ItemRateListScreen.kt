@@ -90,7 +90,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Path
 import com.example.ui.components.AnimatedPillSearchBar
 import com.example.ui.components.CloudSyncStatusBadge
+import com.example.ui.components.PriceTrendMiniBadge
 import com.example.ui.components.ScrollEdgeShadow
+import com.example.ui.components.computePriceTrend
 import com.example.ui.components.rememberCanScrollBack
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.graphics.StrokeCap
@@ -2196,28 +2198,44 @@ fun RateItemCard(
                         )
                     }
 
-                    // 1. ITEM NAME (Left aligned)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1.5f)
+                    val priceTrend = remember(item.id, item.priceHistoryJson, item.variantsJson) {
+                        computePriceTrend(item)
+                    }
+
+                    // 1. ITEM NAME + Canvas Price-Trend Mini Badge (Left aligned)
+                    Column(
+                        modifier = Modifier.weight(1.5f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Text(
-                            text = item.name,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = if (isCompactView) 13.5.sp else 15.sp
-                            ),
-                            fontWeight = FontWeight.Medium,
-                            color = if (isDark) Color.White else Color(0xFF1C1C1E),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (isCompactView && item.category.isNotBlank() && item.category != "General") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Text(
-                                text = item.category.take(8),
-                                fontSize = 9.sp,
-                                color = Color(0xFF8E8E93),
-                                maxLines = 1
+                                text = item.name,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = if (isCompactView) 13.5.sp else 15.sp
+                                ),
+                                fontWeight = FontWeight.Medium,
+                                color = if (isDark) Color.White else Color(0xFF1C1C1E),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (isCompactView && item.category.isNotBlank() && item.category != "General") {
+                                Text(
+                                    text = item.category.take(8),
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF8E8E93),
+                                    maxLines = 1
+                                )
+                            }
+                        }
+
+                        if (!isCompactView && priceTrend != null) {
+                            PriceTrendMiniBadge(
+                                trend = priceTrend,
+                                currencySymbol = currencySymbol,
+                                modifier = Modifier.testTag("price_trend_badge_${item.id}")
                             )
                         }
                     }

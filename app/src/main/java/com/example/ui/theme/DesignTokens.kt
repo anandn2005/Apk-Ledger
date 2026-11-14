@@ -2,6 +2,7 @@ package com.example.ui.theme
 
 import android.view.View
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -161,7 +163,7 @@ fun Modifier.softCardShadow(
 )
 
 // ============================================================
-// 5) TABULAR BALANCE / NUMBER DISPLAY TEXT (120 FPS Zero-Jank)
+// 5) PER-DIGIT ROLLING ODOMETER BALANCE DISPLAY TEXT
 // ============================================================
 @Composable
 fun AnimatedBalanceText(
@@ -174,14 +176,68 @@ fun AnimatedBalanceText(
     val formatted = remember(amount, currencySymbol) {
         com.example.ui.Formatters.formatCurrency(amount, currencySymbol)
     }
+    var previousAmount by remember { mutableDoubleStateOf(amount) }
+    val isIncreasing = amount >= previousAmount
+    SideEffect {
+        previousAmount = amount
+    }
+    val tabularStyle = remember(style) { style.tabularNumbers() }
 
-    Text(
-        text = formatted,
-        style = style.tabularNumbers(),
-        color = color,
-        maxLines = 1,
-        modifier = modifier
-    )
+    Row(
+        modifier = modifier.animateContentSize(
+            animationSpec = spring(
+                dampingRatio = 0.82f,
+                stiffness = 440f
+            )
+        ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        formatted.forEachIndexed { index, ch ->
+            val reverseKey = formatted.length - 1 - index
+            key(reverseKey) {
+                if (ch.isDigit()) {
+                    AnimatedContent(
+                        targetState = ch,
+                        transitionSpec = {
+                            val rollUp = isIncreasing || targetState > initialState
+                            val enterOffset: (Int) -> Int = { h -> if (rollUp) h else -h }
+                            val exitOffset: (Int) -> Int = { h -> if (rollUp) -h else h }
+                            (slideInVertically(
+                                initialOffsetY = enterOffset,
+                                animationSpec = spring(
+                                    dampingRatio = 0.78f,
+                                    stiffness = 480f
+                                )
+                            ) + fadeIn(animationSpec = tween(140))).togetherWith(
+                                slideOutVertically(
+                                    targetOffsetY = exitOffset,
+                                    animationSpec = tween(140)
+                                ) + fadeOut(animationSpec = tween(110))
+                            )
+                        },
+                        modifier = Modifier.clipToBounds(),
+                        label = "odometer_digit_$reverseKey"
+                    ) { digitChar ->
+                        Text(
+                            text = digitChar.toString(),
+                            style = tabularStyle,
+                            color = color,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                } else {
+                    Text(
+                        text = ch.toString(),
+                        style = tabularStyle,
+                        color = color,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+        }
+    }
 }
 
 // ============================================================

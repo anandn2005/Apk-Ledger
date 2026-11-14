@@ -8,6 +8,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -252,7 +254,11 @@ fun LedgerApp(
                                 .fillMaxWidth()
                                 .navigationBarsPadding()
                                 .padding(
-                                    bottom = if (state.selectedCustomerWithBalance == null && !isRateItemSelectionMode) 94.dp else 22.dp,
+                                    bottom = when {
+                                        state.selectedCustomerWithBalance != null -> 88.dp
+                                        !isRateItemSelectionMode -> 94.dp
+                                        else -> 22.dp
+                                    },
                                     start = 20.dp,
                                     end = 20.dp
                                 )
@@ -280,7 +286,10 @@ fun LedgerApp(
                             .padding(innerPadding)
                             .consumeWindowInsets(innerPadding)
                     ) {
-                        // Shared-axis spring transition between Customer Detail view and Main Tab views
+                        // Shared-axis + SharedTransitionLayout morph between Customer List and Customer Detail
+                        @OptIn(ExperimentalSharedTransitionApi::class)
+                        SharedTransitionLayout {
+                            val customerSharedScope = this
                         AnimatedContent(
                             targetState = state.selectedCustomerWithBalance,
                             transitionSpec = {
@@ -310,6 +319,7 @@ fun LedgerApp(
                             },
                             label = "CustomerDetailSharedAxisTransition"
                         ) { activeCustomerWithBalance ->
+                            val customerAnimatedScope = this@AnimatedContent
                             if (activeCustomerWithBalance != null) {
                                 val selCustTransactions by viewModel.selectedCustomerTransactions.collectAsState(initial = emptyList())
 
@@ -331,7 +341,18 @@ fun LedgerApp(
                                     onUpdateTransaction = { txn -> viewModel.updateTransaction(txn) },
                                     onUpdateCustomer = { cust -> viewModel.updateCustomer(cust) },
                                     onDeleteCustomer = { id -> viewModel.deleteCustomer(id) },
-                                    onDeleteSelectedTransactions = { txns -> viewModel.deleteSelectedTransactions(txns) }
+                                    onDeleteSelectedTransactions = { txns -> viewModel.deleteSelectedTransactions(txns) },
+                                    onMergeTransactions = { custId, txnsToMerge, combineSingleNet, desc, mergeDateTs ->
+                                        viewModel.mergeCustomerTransactions(
+                                            customerId = custId,
+                                            transactionsToMerge = txnsToMerge,
+                                            combineIntoSingleNetEntry = combineSingleNet,
+                                            customDescription = desc,
+                                            mergeDateTimestamp = mergeDateTs
+                                        )
+                                    },
+                                    sharedTransitionScope = customerSharedScope,
+                                    animatedVisibilityScope = customerAnimatedScope
                                 )
                             } else {
                             AnimatedContent(
@@ -408,7 +429,9 @@ fun LedgerApp(
                                             preselectedCustomerIdForQuickEntry = custId
                                             quickEntryType = txnType
                                             showQuickSaleDepositSheet = true
-                                        }
+                                        },
+                                        sharedTransitionScope = customerSharedScope,
+                                        animatedVisibilityScope = customerAnimatedScope
                                     )
 
                                     2 -> InvoicesScreen(
@@ -459,6 +482,7 @@ fun LedgerApp(
                                 }
                             }
                             }
+                        }
                         }
 
                             // Expandable Speed-Dial FAB Menu (Visible on Tab 1 / Ledger)

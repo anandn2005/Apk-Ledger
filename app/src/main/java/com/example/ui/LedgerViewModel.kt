@@ -1004,6 +1004,106 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun mergeCustomerTransactions(
+        customerId: String,
+        transactionsToMerge: List<TransactionEntity>,
+        combineIntoSingleNetEntry: Boolean,
+        customDescription: String,
+        mergeDateTimestamp: Long
+    ) {
+        if (transactionsToMerge.size < 2) return
+
+        val debitTxns = transactionsToMerge.filter {
+            it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name
+        }
+        val creditTxns = transactionsToMerge.filter {
+            it.type == TransactionType.GOT_PAYMENT.name
+        }
+        val debitSum = debitTxns.sumOf { it.amount }
+        val creditSum = creditTxns.sumOf { it.amount }
+        val baseDesc = customDescription.trim().ifBlank {
+            "Merged ${transactionsToMerge.size} entries"
+        }
+        val now = System.currentTimeMillis()
+        val effectiveDate = if (mergeDateTimestamp > 0L) mergeDateTimestamp else {
+            transactionsToMerge.maxOfOrNull { it.date } ?: now
+        }
+
+        val createdTransactions = buildList {
+            if (combineIntoSingleNetEntry) {
+                val net = debitSum - creditSum
+                val isNetDebit = net > 0.005
+                val isNetZero = kotlin.math.abs(net) <= 0.005
+                add(
+                    TransactionEntity(
+                        id = UUID.randomUUID().toString(),
+                        customerId = customerId,
+                        amount = if (isNetZero) 0.0 else kotlin.math.abs(net),
+                        type = if (isNetDebit) TransactionType.GAVE_CREDIT.name else TransactionType.GOT_PAYMENT.name,
+                        description = if (isNetZero) "$baseDesc (Settled)" else baseDesc,
+                        date = effectiveDate,
+                        invoiceRef = "",
+                        paymentMethod = "MERGED",
+                        status = if (isNetZero) "PAID" else "COMPLETED",
+                        lastUpdated = now
+                    )
+                )
+            } else {
+                val createsBoth = debitTxns.isNotEmpty() && creditTxns.isNotEmpty() && debitSum > 0.0 && creditSum > 0.0
+                if (debitTxns.isNotEmpty() && debitSum > 0.0) {
+                    add(
+                        TransactionEntity(
+                            id = UUID.randomUUID().toString(),
+                            customerId = customerId,
+                            amount = debitSum,
+                            type = TransactionType.GAVE_CREDIT.name,
+                            description = if (createsBoth) "$baseDesc (Debits ×${debitTxns.size})" else baseDesc,
+                            date = effectiveDate,
+                            invoiceRef = "",
+                            paymentMethod = "MERGED",
+                            status = "COMPLETED",
+                            lastUpdated = now
+                        )
+                    )
+                }
+                if (creditTxns.isNotEmpty() && creditSum > 0.0) {
+                    add(
+                        TransactionEntity(
+                            id = UUID.randomUUID().toString(),
+                            customerId = customerId,
+                            amount = creditSum,
+                            type = TransactionType.GOT_PAYMENT.name,
+                            description = if (createsBoth) "$baseDesc (Credits ×${creditTxns.size})" else baseDesc,
+                            date = effectiveDate - 1L,
+                            invoiceRef = "",
+                            paymentMethod = "MERGED",
+                            status = "COMPLETED",
+                            lastUpdated = now
+                        )
+                    )
+                }
+            }
+        }
+
+        if (createdTransactions.isEmpty() || createdTransactions.size >= transactionsToMerge.size) {
+            _userMessage.value = "Select at least 2 entries of the same type or use Single Net mode"
+            return
+        }
+
+        lastDeletedSnapshot = DeletedRecordSnapshot.MergedTransactions(
+            originalItems = transactionsToMerge,
+            createdItems = createdTransactions
+        )
+        viewModelScope.launch {
+            repository.mergeTransactions(
+                customerId = customerId,
+                sourceTransactions = transactionsToMerge,
+                createdTransactions = createdTransactions
+            )
+            _userMessage.value = "Merged ${transactionsToMerge.size} entries into ${createdTransactions.size}"
+        }
+    }
+
     fun deleteSelectedCustomers(ids: Set<String>) {
         viewModelScope.launch {
             val snapshots = ids.mapNotNull { id ->
@@ -1402,6 +1502,10 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         data class Customers(val items: List<Pair<CustomerEntity, List<TransactionEntity>>>) : DeletedRecordSnapshot
         data class Transactions(val items: List<TransactionEntity>) : DeletedRecordSnapshot
         data class Invoices(val items: List<InvoiceEntity>) : DeletedRecordSnapshot
+        data class MergedTransactions(
+            val originalItems: List<TransactionEntity>,
+            val createdItems: List<TransactionEntity>
+        ) : DeletedRecordSnapshot
     }
 
     private var lastDeletedRateItems: List<RateItemEntity>? = null
@@ -1434,6 +1538,13 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 is DeletedRecordSnapshot.Invoices -> {
                     snapshot.items.forEach { repository.insertInvoice(it) }
                     _userMessage.value = "Restored ${snapshot.items.size} receipt(s)"
+                }
+                is DeletedRecordSnapshot.MergedTransactions -> {
+                    repository.undoMergeTransactions(
+                        originalTransactions = snapshot.originalItems,
+                        createdTransactions = snapshot.createdItems
+                    )
+                    _userMessage.value = "Restored ${snapshot.originalItems.size} merged entries"
                 }
             }
         }

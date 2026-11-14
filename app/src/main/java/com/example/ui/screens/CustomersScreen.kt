@@ -113,7 +113,7 @@ private fun launchNativeDatePicker(
     dpd.show()
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun CustomersScreen(
     state: LedgerUiState,
@@ -129,7 +129,9 @@ fun CustomersScreen(
     onDailyClosingClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenNotes: () -> Unit = {},
-    onQuickEntryForCustomer: ((customerId: String, txnType: String) -> Unit)? = null
+    onQuickEntryForCustomer: ((customerId: String, txnType: String) -> Unit)? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -1107,13 +1109,14 @@ fun CustomersScreen(
                                             color = TextSecondary,
                                             letterSpacing = 0.4.sp
                                         )
-                                        Text(
-                                            text = Formatters.formatCurrency(totalToCollect, state.currencySymbol),
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = DebitRed,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                        AnimatedBalanceText(
+                                            amount = totalToCollect,
+                                            currencySymbol = state.currencySymbol,
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            ),
+                                            color = DebitRed
                                         )
                                     }
 
@@ -1142,13 +1145,14 @@ fun CustomersScreen(
                                             color = TextSecondary,
                                             letterSpacing = 0.4.sp
                                         )
-                                        Text(
-                                            text = Formatters.formatCurrency(totalAdvance, state.currencySymbol),
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = CreditGreen,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                        AnimatedBalanceText(
+                                            amount = totalAdvance,
+                                            currencySymbol = state.currencySymbol,
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            ),
+                                            color = CreditGreen
                                         )
                                     }
 
@@ -1168,10 +1172,13 @@ fun CustomersScreen(
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (netDiff >= 0) DebitRed else CreditGreen
                                             )
-                                            Text(
-                                                text = Formatters.formatCurrency(Math.abs(netDiff), state.currencySymbol),
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.ExtraBold,
+                                            AnimatedBalanceText(
+                                                amount = Math.abs(netDiff),
+                                                currencySymbol = state.currencySymbol,
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                ),
                                                 color = if (netDiff >= 0) DebitRed else CreditGreen
                                             )
                                         }
@@ -1243,7 +1250,9 @@ fun CustomersScreen(
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         selectedIds = if (isSelected) selectedIds - item.customer.id else selectedIds + item.customer.id
                                     },
-                                    onTogglePin = { onTogglePinCustomer(item.customer.id) }
+                                    onTogglePin = { onTogglePinCustomer(item.customer.id) },
+                                    sharedTransitionScope = sharedTransitionScope,
+                                    animatedVisibilityScope = animatedVisibilityScope
                                 )
                             }
                         }
@@ -1273,7 +1282,7 @@ fun CustomersScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
 private fun CustomerCardItem(
     item: CustomerWithBalance,
@@ -1282,7 +1291,9 @@ private fun CustomerCardItem(
     isPinned: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onTogglePin: () -> Unit
+    onTogglePin: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
     val cust = item.customer
     val net = item.netBalance
@@ -1309,6 +1320,46 @@ private fun CustomerCardItem(
         }.joinToString(" • ")
     }
 
+    val cardSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "customer_card_${cust.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
+    val avatarSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedElement(
+                state = rememberSharedContentState(key = "customer_avatar_${cust.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
+    val nameSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "customer_name_${cust.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
+    val balanceSharedModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+        with(sharedTransitionScope) {
+            Modifier.sharedBounds(
+                sharedContentState = rememberSharedContentState(key = "customer_balance_${cust.id}"),
+                animatedVisibilityScope = animatedVisibilityScope,
+                boundsTransform = { _, _ -> spring(dampingRatio = 0.82f, stiffness = 380f) }
+            )
+        }
+    } else Modifier
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = if (isSelected) {
@@ -1320,7 +1371,7 @@ private fun CustomerCardItem(
             1.dp,
             if (isSelected) AccentGreen else (if (isDark) Color(0xFF333336) else BorderGreenGray)
         ),
-        modifier = Modifier
+        modifier = cardSharedModifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 74.dp)
             .clip(RoundedCornerShape(14.dp))
@@ -1349,7 +1400,7 @@ private fun CustomerCardItem(
                     shape = CircleShape,
                     color = avatarBg,
                     border = BorderStroke(1.dp, avatarFg.copy(alpha = 0.25f)),
-                    modifier = Modifier.size(44.dp)
+                    modifier = avatarSharedModifier.size(44.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
@@ -1376,7 +1427,7 @@ private fun CustomerCardItem(
                             color = if (isDark) Color.White else TextPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
+                            modifier = nameSharedModifier.weight(1f, fill = false)
                         )
 
                         if (cust.area.isNotBlank()) {
@@ -1451,7 +1502,8 @@ private fun CustomerCardItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     ),
-                    color = if (net == 0.0) TextSecondary else (if (isOwed) CreditGreen else DebitRed)
+                    color = if (net == 0.0) TextSecondary else (if (isOwed) CreditGreen else DebitRed),
+                    modifier = balanceSharedModifier
                 )
 
                 Text(

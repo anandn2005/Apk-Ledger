@@ -28,8 +28,9 @@ class GreetingScreenshotTest {
         LoginScreen(
           isCheckingAuth = false,
           isSigningIn = false,
+          onSignInWithGoogle = {},
           onSignInWithEmail = { _, _ -> },
-          onCreateAccountWithEmail = { _, _ -> }
+          onSignUpWithEmail = { _, _, _ -> }
         )
       }
     }
