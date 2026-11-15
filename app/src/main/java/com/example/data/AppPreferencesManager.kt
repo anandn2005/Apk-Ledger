@@ -186,26 +186,60 @@ class AppPreferencesManager(context: Context) {
 
     fun verifyPasscodePin(inputPin: String): Boolean {
         val stored = passcodePin
-        if (stored.isBlank()) return false
+        if (stored.isBlank() || !stored.startsWith(HASH_PREFIX)) return false
         val cleanInput = inputPin.trim()
-        if (stored.startsWith(HASH_PREFIX)) {
-            val parts = stored.removePrefix(HASH_PREFIX).split(":")
-            if (parts.size != 2) return false
-            val saltHex = parts[0]
-            val expectedHash = parts[1]
-            val actualHash = computeSha256(cleanInput, saltHex)
-            return java.security.MessageDigest.isEqual(
-                expectedHash.toByteArray(Charsets.UTF_8),
-                actualHash.toByteArray(Charsets.UTF_8)
-            )
-        } else {
-            // Legacy plaintext PIN check + automatic transparent upgrade to salted SHA-256
-            val matched = cleanInput == stored.trim()
-            if (matched) {
-                setHashedPasscode(cleanInput)
-            }
-            return matched
+        val parts = stored.removePrefix(HASH_PREFIX).split(":")
+        if (parts.size != 2) return false
+        val saltHex = parts[0]
+        val expectedHash = parts[1]
+        val actualHash = computeSha256(cleanInput, saltHex)
+        return java.security.MessageDigest.isEqual(
+            expectedHash.toByteArray(Charsets.UTF_8),
+            actualHash.toByteArray(Charsets.UTF_8)
+        )
+    }
+
+    var failedPinAttempts: Int
+        get() = prefs.getInt("failed_pin_attempts", 0)
+        set(value) = prefs.edit().putInt("failed_pin_attempts", value).apply()
+
+    var pinLockoutUntil: Long
+        get() = prefs.getLong("pin_lockout_until", 0L)
+        set(value) = prefs.edit().putLong("pin_lockout_until", value).apply()
+
+    fun isPinLockedOut(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val until = pinLockoutUntil
+        if (until <= 0L) return false
+        if (nowMs >= until) {
+            pinLockoutUntil = 0L
+            failedPinAttempts = 0
+            return false
         }
+        return true
+    }
+
+    fun remainingPinLockoutSeconds(nowMs: Long = System.currentTimeMillis()): Long {
+        val until = pinLockoutUntil
+        if (until <= nowMs) return 0L
+        return ((until - nowMs) + 999L) / 1000L
+    }
+
+    fun recordFailedPinAttempt(nowMs: Long = System.currentTimeMillis()): Pair<Int, Long> {
+        val attempts = failedPinAttempts + 1
+        failedPinAttempts = attempts
+        if (attempts >= 5) {
+            val lockoutMs = 30_000L
+            pinLockoutUntil = nowMs + lockoutMs
+            return attempts to 30L
+        }
+        return attempts to 0L
+    }
+
+    fun resetPinLockout() {
+        prefs.edit()
+            .putInt("failed_pin_attempts", 0)
+            .putLong("pin_lockout_until", 0L)
+            .apply()
     }
 
     private fun computeSha256(pin: String, saltHex: String): String {
@@ -307,8 +341,13 @@ class AppPreferencesManager(context: Context) {
             json.put(category, iconKey)
             categoryIconMapJson = json.toString()
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "setCategoryIconKey")
         }
+    }
+
+    fun clearAllUserAndLedgerPrefs() {
+        isUnlocked = true
+        prefs.edit().clear().commit()
     }
 }
 

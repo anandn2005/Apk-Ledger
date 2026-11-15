@@ -44,6 +44,12 @@ sealed class AuthResult {
     object PasswordResetSent : AuthResult()
 }
 
+sealed class DeleteAccountResult {
+    object Success : DeleteAccountResult()
+    object RequiresRecentLogin : DeleteAccountResult()
+    data class Error(val message: String) : DeleteAccountResult()
+}
+
 class FirebaseAuthManager(
     private val context: Context,
     private val prefs: AppPreferencesManager
@@ -117,10 +123,11 @@ class FirebaseAuthManager(
     private fun resolveWebClientId(): String? {
         return try {
             context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
-                ?: DEFAULT_WEB_CLIENT_ID
         } catch (e: Exception) {
-            Log.w(TAG, "default_web_client_id resource not found, using configured Web Client ID: ${e.message}")
-            DEFAULT_WEB_CLIENT_ID
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "default_web_client_id resource not found: ${e.message}")
+            }
+            null
         }
     }
 
@@ -234,14 +241,20 @@ class FirebaseAuthManager(
                 AuthResult.Error("Unexpected credential type received from Credential Manager.")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+            }
             AuthResult.Cancelled
         } catch (e: NoCredentialException) {
-            Log.w(TAG, "No Google account found on device: ${e.message}", e)
-            AuthResult.Error("No Google account found on this device. Please add a Google account in Android Settings -> Accounts, or ensure SHA-1 certificate A5:A6:75:2F:68:69:31:C0:F7:33:BC:27:56:31:D3:C9:AD:51:F5:95 is registered in Firebase Console.", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "No Google account found on device: ${e.message}", e)
+            }
+            AuthResult.Error("No Google account found on this device. Please add a Google account in Android Settings -> Accounts, or sign in with Email.", e)
         } catch (e: Exception) {
-            Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
-            AuthResult.Error(e.localizedMessage ?: "Google Sign-In failed. Please try again.", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e(TAG, "Google Sign-In failed: ${e.message}", e)
+            }
+            AuthResult.Error(formatAuthErrorMessage(e), e)
         }
     }
 
@@ -350,7 +363,37 @@ class FirebaseAuthManager(
                 "Please enter a valid email address."
             msg.contains("network", ignoreCase = true) ->
                 "Network connection issue. Please check your internet connection."
-            else -> msg
+            else -> "Authentication failed. Please check your details and try again."
+        }
+    }
+
+    suspend fun deleteCurrentUserAccount(): DeleteAccountResult {
+        val auth = getAuth() ?: return DeleteAccountResult.Error("Authentication service unavailable.")
+        val currentFirebaseUser = auth.currentUser ?: return DeleteAccountResult.Success
+        return try {
+            awaitTask { currentFirebaseUser.delete() }
+            try {
+                CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.w(TAG, "Failed to clear CredentialManager state: ${e.message}")
+                }
+            }
+            _currentUser.value = null
+            prefs.cachedUserEmail = ""
+            prefs.cachedUserName = ""
+            prefs.cachedUserPhotoUrl = ""
+            DeleteAccountResult.Success
+        } catch (e: com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException) {
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "Account deletion requires recent authentication", e)
+            }
+            DeleteAccountResult.RequiresRecentLogin
+        } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e(TAG, "Failed to delete Firebase account", e)
+            }
+            DeleteAccountResult.Error("Could not delete your account right now. Please sign in again and retry.")
         }
     }
 
@@ -358,13 +401,17 @@ class FirebaseAuthManager(
         try {
             getAuth()?.signOut()
         } catch (e: Exception) {
-            Log.w(TAG, "Error during Firebase signOut: ${e.message}")
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w(TAG, "Error during Firebase signOut: ${e.message}")
+            }
         }
         scope.launch {
             try {
                 CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to clear CredentialManager state: ${e.message}")
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.w(TAG, "Failed to clear CredentialManager state: ${e.message}")
+                }
             }
         }
         _currentUser.value = null
@@ -382,7 +429,6 @@ class FirebaseAuthManager(
     companion object {
         const val FIREBASE_PROJECT_ID = "ledger--mate"
         const val FIREBASE_PROJECT_NUMBER = "712978117654"
-        const val DEFAULT_WEB_CLIENT_ID = "712978117654-l69391q08rvdiic04lrq7p3eaoe65agj.apps.googleusercontent.com"
 
         suspend fun <T> awaitTask(block: () -> com.google.android.gms.tasks.Task<T>): T =
             suspendCancellableCoroutine { continuation ->

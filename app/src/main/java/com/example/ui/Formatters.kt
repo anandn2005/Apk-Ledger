@@ -195,4 +195,32 @@ object Formatters {
         }
         return cal.timeInMillis
     }
+
+    /**
+     * Formats merged transaction date range:
+     * - Same calendar day: "15 Nov 2026"
+     * - Same year: "12 Nov → 15 Nov 2026"
+     * - Different years: "28 Dec 2025 → 03 Jan 2026"
+     */
+    fun formatMergedDateRange(fromMillis: Long, toMillis: Long): String {
+        val minTs = minOf(fromMillis, toMillis)
+        val maxTs = maxOf(fromMillis, toMillis)
+        val calFrom = Calendar.getInstance().apply { timeInMillis = minTs }
+        val calTo = Calendar.getInstance().apply { timeInMillis = maxTs }
+
+        val fromDay = calFrom.get(Calendar.DAY_OF_MONTH)
+        val fromMonth = monthNamesShort[calFrom.get(Calendar.MONTH).coerceIn(0, 11)]
+        val fromYear = calFrom.get(Calendar.YEAR)
+
+        val toDay = calTo.get(Calendar.DAY_OF_MONTH)
+        val toMonth = monthNamesShort[calTo.get(Calendar.MONTH).coerceIn(0, 11)]
+        val toYear = calTo.get(Calendar.YEAR)
+
+        val sameDay = fromYear == toYear && calFrom.get(Calendar.DAY_OF_YEAR) == calTo.get(Calendar.DAY_OF_YEAR)
+        return when {
+            sameDay -> String.format(Locale.US, "%02d %s %04d", toDay, toMonth, toYear)
+            fromYear == toYear -> String.format(Locale.US, "%02d %s \u2192 %02d %s %04d", fromDay, fromMonth, toDay, toMonth, toYear)
+            else -> String.format(Locale.US, "%02d %s %04d \u2192 %02d %s %04d", fromDay, fromMonth, fromYear, toDay, toMonth, toYear)
+        }
+    }
 }

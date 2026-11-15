@@ -77,6 +77,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.ui.components.CategoryIconPickerDialog
 import com.example.ui.components.VectorIconRegistry
+import com.example.BuildConfig
+import com.example.ui.components.PrivacyPolicyAndTermsDialog
 import com.example.ui.components.VectorIconView
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -111,7 +113,9 @@ fun ReportsSettingsScreen(
     onSetCategoryIcon: (String, String) -> Unit = { _, _ -> },
     onShowMessage: (String) -> Unit = {},
     onImportBackupData: (String) -> Unit = {},
-    onExportJson: suspend () -> String = { "{}" }
+    onExportJson: suspend () -> String = { "{}" },
+    onVerifyCurrentPin: (String) -> Boolean = { true },
+    onDeleteAccountAndData: (onComplete: (Boolean, String) -> Unit) -> Unit = { it(true, "") }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -186,6 +190,9 @@ fun ReportsSettingsScreen(
     var showManageUnitsDialog by remember { mutableStateOf(false) }
     var showManageCategoriesDialog by remember { mutableStateOf(false) }
     var showEmailAuthDialog by remember { mutableStateOf(false) }
+    var showPrivacyTermsDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var isDeletingAccount by remember { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
 
@@ -375,6 +382,35 @@ fun ReportsSettingsScreen(
                                     Text("Sign Out", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = textPrimary)
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            OutlinedButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    showDeleteAccountDialog = true
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("settings_delete_account_button"),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.4f)),
+                                contentPadding = PaddingValues(vertical = 10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = Color(0xFFDC2626)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Delete Account & Cloud Data",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFDC2626)
+                                )
+                            }
                         } else {
                             // Signed out / Offline mode with 1-tap Google Sign-In
                             Column(
@@ -480,6 +516,33 @@ fun ReportsSettingsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Sign in with Email", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = textPrimary)
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        showDeleteAccountDialog = true
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.35f)),
+                                    contentPadding = PaddingValues(vertical = 10.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("settings_erase_local_data_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Delete,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = Color(0xFFDC2626)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Erase Local App Data",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFDC2626)
+                                    )
                                 }
                             }
                         }
@@ -874,6 +937,86 @@ fun ReportsSettingsScreen(
                     }
                 }
 
+                // ============================================================
+                // 7) ABOUT & LEGAL
+                // ============================================================
+                item {
+                    SettingsSectionHeader("ABOUT & LEGAL", textSecondary)
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    SoftSettingCard(
+                        backgroundColor = cardBackground,
+                        borderColor = cardBorder
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "App Version",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = textSecondary
+                                )
+                                Text(
+                                    text = "v${BuildConfig.VERSION_NAME}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = textPrimary
+                                )
+                            }
+
+                            HorizontalDivider(color = dividerColor, thickness = 1.dp)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        showPrivacyTermsDialog = true
+                                    }
+                                    .padding(vertical = 4.dp)
+                                    .testTag("settings_privacy_terms_button"),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PrivacyTip,
+                                        contentDescription = null,
+                                        tint = accentGreen,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "Privacy Policy & Terms of Use",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = textPrimary
+                                        )
+                                        Text(
+                                            text = "Data handling, exports & account deletion",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = textSecondary
+                                        )
+                                    }
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.ChevronRight,
+                                    contentDescription = "Open Privacy Policy and Terms",
+                                    tint = textSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item { Spacer(modifier = Modifier.height(145.dp)) }
             }
 
@@ -1026,6 +1169,103 @@ fun ReportsSettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showEmailAuthDialog = false }) {
+                    Text("Cancel", color = textSecondary)
+                }
+            }
+        )
+    }
+
+    if (showPrivacyTermsDialog) {
+        PrivacyPolicyAndTermsDialog(
+            onDismiss = { showPrivacyTermsDialog = false },
+            isDark = isDark
+        )
+    }
+
+    if (showDeleteAccountDialog) {
+        var confirmDeleteText by remember { mutableStateOf("") }
+        val isSignedIn = state.authUser != null
+        AlertDialog(
+            onDismissRequest = { if (!isDeletingAccount) showDeleteAccountDialog = false },
+            containerColor = cardBackground,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFDC2626)
+                )
+            },
+            title = {
+                Text(
+                    text = if (isSignedIn) "Delete Account & Cloud Data?" else "Erase Local App Data?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = textPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = if (isSignedIn) {
+                            "This permanently deletes your Firebase account, synced cloud records, and all local ledgers, items, invoices, and notes. Export a JSON/CSV backup first if you want a copy."
+                        } else {
+                            "This permanently erases all local ledgers, customers, rate items, invoices, notes, and preferences on this device."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = textSecondary
+                    )
+                    OutlinedTextField(
+                        value = confirmDeleteText,
+                        onValueChange = { confirmDeleteText = it },
+                        label = { Text("Type DELETE to confirm") },
+                        singleLine = true,
+                        enabled = !isDeletingAccount,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("confirm_delete_account_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isDeletingAccount = true
+                        onDeleteAccountAndData { success, msg ->
+                            isDeletingAccount = false
+                            if (success) {
+                                showDeleteAccountDialog = false
+                            }
+                            if (msg.isNotBlank()) {
+                                onShowMessage(msg)
+                            }
+                        }
+                    },
+                    enabled = confirmDeleteText.trim().equals("DELETE", ignoreCase = true) && !isDeletingAccount,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDC2626),
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("confirm_delete_account_button")
+                ) {
+                    if (isDeletingAccount) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Deleting...")
+                    } else {
+                        Text("Delete Forever", fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteAccountDialog = false },
+                    enabled = !isDeletingAccount
+                ) {
                     Text("Cancel", color = textSecondary)
                 }
             }
@@ -1232,6 +1472,9 @@ fun ReportsSettingsScreen(
     if (showPasscodeDialog) {
         var pin: String by remember { mutableStateOf("") }
         var isEditingPin by remember { mutableStateOf(!state.isPasscodeEnabled) }
+        var currentPinInput: String by remember { mutableStateOf("") }
+        var currentPinError: String? by remember { mutableStateOf(null) }
+        var isCurrentPinVerified: Boolean by remember { mutableStateOf(!state.isPasscodeEnabled) }
 
         FrostedIosModal(
             onDismissRequest = { showPasscodeDialog = false },
@@ -1243,79 +1486,43 @@ fun ReportsSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Passcode Toggle Card
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = surfaceVariantBg,
-                    border = BorderStroke(1.dp, cardBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Require Passcode on Startup",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = textPrimary
-                            )
-                            Text(
-                                text = if (state.isPasscodeEnabled) "PIN lock active" else "Require 4-digit PIN to open LedgerMate",
-                                fontSize = 12.sp,
-                                color = textSecondary
-                            )
-                        }
-                        Switch(
-                            checked = state.isPasscodeEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
-                                    isEditingPin = true
-                                } else {
-                                    onSetPasscode("", false)
-                                    isEditingPin = false
-                                    onShowMessage("Passcode lock disabled")
-                                }
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = accentGreen,
-                                uncheckedThumbColor = Color.White,
-                                uncheckedTrackColor = switchUncheckedTrack
-                            )
-                        )
-                    }
-                }
-
-                if (state.isPasscodeEnabled || isEditingPin) {
+                if (state.isPasscodeEnabled && !isCurrentPinVerified) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = if (state.isPasscodeEnabled) "Change 4-Digit PIN:" else "Enter 4-Digit PIN:",
+                            text = "Verify your current 4-digit PIN before changing security settings:",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = textPrimary
                         )
                         OutlinedTextField(
-                            value = pin,
+                            value = currentPinInput,
                             onValueChange = { input: String ->
                                 if (input.length <= 4 && input.all { char -> char.isDigit() }) {
-                                    pin = input
+                                    currentPinInput = input
+                                    currentPinError = null
                                 }
                             },
-                            placeholder = { Text("••••") },
-                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Current 4-digit PIN") },
+                            isError = currentPinError != null,
+                            supportingText = currentPinError?.let { err ->
+                                { Text(err, color = Color(0xFFDC2626), fontSize = 11.sp) }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("verify_current_pin_input"),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(
                                 onDone = {
-                                    if (pin.length == 4) {
-                                        onSetPasscode(pin, true)
-                                        showPasscodeDialog = false
+                                    if (currentPinInput.length == 4) {
+                                        if (onVerifyCurrentPin(currentPinInput)) {
+                                            isCurrentPinVerified = true
+                                            currentPinError = null
+                                        } else {
+                                            currentPinError = "Incorrect current PIN"
+                                            currentPinInput = ""
+                                        }
                                     }
                                 }
                             ),
@@ -1330,60 +1537,167 @@ fun ReportsSettingsScreen(
                         )
                         Button(
                             onClick = {
-                                if (pin.length == 4) {
-                                    onSetPasscode(pin, true)
-                                    showPasscodeDialog = false
+                                if (onVerifyCurrentPin(currentPinInput)) {
+                                    isCurrentPinVerified = true
+                                    currentPinError = null
+                                } else {
+                                    currentPinError = "Incorrect current PIN"
+                                    currentPinInput = ""
                                 }
                             },
-                            enabled = pin.length == 4,
-                            modifier = Modifier.fillMaxWidth(),
+                            enabled = currentPinInput.length == 4,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("verify_current_pin_button"),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = accentGreen, contentColor = Color.White)
                         ) {
-                            Text("Save PIN", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Verify Current PIN", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                } else {
+                    // Passcode Toggle Card
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = surfaceVariantBg,
+                        border = BorderStroke(1.dp, cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Require Passcode on Startup",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = textPrimary
+                                )
+                                Text(
+                                    text = if (state.isPasscodeEnabled) "PIN lock active" else "Require 4-digit PIN to open LedgerMate",
+                                    fontSize = 12.sp,
+                                    color = textSecondary
+                                )
+                            }
+                            Switch(
+                                checked = state.isPasscodeEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        isEditingPin = true
+                                    } else {
+                                        onSetPasscode("", false)
+                                        isEditingPin = false
+                                        onShowMessage("Passcode lock disabled")
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = accentGreen,
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = switchUncheckedTrack
+                                )
+                            )
                         }
                     }
 
-                    if (state.isPasscodeEnabled) {
-                        HorizontalDivider(color = dividerColor.copy(alpha = 0.5f), thickness = 0.5.dp)
+                    if (state.isPasscodeEnabled || isEditingPin) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = if (state.isPasscodeEnabled) "Change 4-Digit PIN:" else "Enter 4-Digit PIN:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = textPrimary
+                            )
+                            OutlinedTextField(
+                                value = pin,
+                                onValueChange = { input: String ->
+                                    if (input.length <= 4 && input.all { char -> char.isDigit() }) {
+                                        pin = input
+                                    }
+                                },
+                                placeholder = { Text("••••") },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(
+                                    onDone = {
+                                        if (pin.length == 4) {
+                                            onSetPasscode(pin, true)
+                                            showPasscodeDialog = false
+                                        }
+                                    }
+                                ),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = accentGreen,
+                                    unfocusedBorderColor = cardBorder,
+                                    focusedTextColor = textPrimary,
+                                    unfocusedTextColor = textPrimary,
+                                    focusedContainerColor = surfaceVariantBg,
+                                    unfocusedContainerColor = surfaceVariantBg
+                                )
+                            )
+                            Button(
+                                onClick = {
+                                    if (pin.length == 4) {
+                                        onSetPasscode(pin, true)
+                                        showPasscodeDialog = false
+                                    }
+                                },
+                                enabled = pin.length == 4,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentGreen, contentColor = Color.White)
+                            ) {
+                                Text("Save PIN", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
 
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = surfaceVariantBg,
-                            border = BorderStroke(1.dp, cardBorder),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                        if (state.isPasscodeEnabled) {
+                            HorizontalDivider(color = dividerColor.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = surfaceVariantBg,
+                                border = BorderStroke(1.dp, cardBorder),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Fingerprint, contentDescription = null, tint = accentGreen, modifier = Modifier.size(24.dp))
-                                    Column {
-                                        Text("Biometric Unlock", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = textPrimary)
-                                        Text("Fingerprint or Face unlock", fontSize = 11.sp, color = textSecondary)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.Fingerprint, contentDescription = null, tint = accentGreen, modifier = Modifier.size(24.dp))
+                                        Column {
+                                            Text("Biometric Unlock", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = textPrimary)
+                                            Text("Fingerprint or Face unlock", fontSize = 11.sp, color = textSecondary)
+                                        }
                                     }
-                                }
-                                Switch(
-                                    checked = isBiometricEnabled,
-                                    onCheckedChange = {
-                                        isBiometricEnabled = it
-                                        prefs.isBiometricEnabled = it
-                                        onShowMessage(if (it) "Biometric unlock enabled" else "Biometric unlock disabled")
-                                    },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color.White,
-                                        checkedTrackColor = accentGreen,
-                                        uncheckedThumbColor = Color.White,
-                                        uncheckedTrackColor = switchUncheckedTrack
+                                    Switch(
+                                        checked = isBiometricEnabled,
+                                        onCheckedChange = {
+                                            isBiometricEnabled = it
+                                            prefs.isBiometricEnabled = it
+                                            onShowMessage(if (it) "Biometric unlock enabled" else "Biometric unlock disabled")
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = Color.White,
+                                            checkedTrackColor = accentGreen,
+                                            uncheckedThumbColor = Color.White,
+                                            uncheckedTrackColor = switchUncheckedTrack
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     }

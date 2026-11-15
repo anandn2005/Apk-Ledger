@@ -102,6 +102,8 @@ fun LoginScreen(
     var nameInput by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var showPrivacyTermsDialog by remember { mutableStateOf(false) }
+    var isAgeConfirmed by remember { mutableStateOf(false) }
 
     // Staggered entrance choreography
     var showHero by remember { mutableStateOf(false) }
@@ -480,7 +482,7 @@ fun LoginScreen(
                                     focusManager.clearFocus()
                                     if (authMode == "SIGN_IN") {
                                         onSignInWithEmail(emailInput, passwordInput)
-                                    } else {
+                                    } else if (isAgeConfirmed) {
                                         onSignUpWithEmail(emailInput, passwordInput, nameInput)
                                     }
                                 }
@@ -561,6 +563,33 @@ fun LoginScreen(
                             }
                         }
 
+                        if (authMode == "SIGN_UP") {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { isAgeConfirmed = !isAgeConfirmed }
+                                    .padding(vertical = 2.dp)
+                                    .testTag("login_age_confirm_row")
+                            ) {
+                                Checkbox(
+                                    checked = isAgeConfirmed,
+                                    onCheckedChange = { isAgeConfirmed = it },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = AccentGreen,
+                                        uncheckedColor = TextSecondary
+                                    )
+                                )
+                                Text(
+                                    text = "I confirm I am 18+ years old and agree to the Privacy Policy & Terms",
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+
                         // Submit Button for Email / Password
                         Button(
                             onClick = {
@@ -572,7 +601,11 @@ fun LoginScreen(
                                     onSignUpWithEmail(emailInput, passwordInput, nameInput)
                                 }
                             },
-                            enabled = !isSigningIn && !isCheckingAuth && emailInput.isNotBlank() && passwordInput.isNotBlank(),
+                            enabled = !isSigningIn &&
+                                !isCheckingAuth &&
+                                emailInput.isNotBlank() &&
+                                passwordInput.isNotBlank() &&
+                                (authMode == "SIGN_IN" || isAgeConfirmed),
                             shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = TextPrimary,
@@ -666,6 +699,17 @@ fun LoginScreen(
                         color = TextSecondary,
                         textAlign = TextAlign.Center
                     )
+
+                    Text(
+                        text = "Privacy Policy & Terms of Use",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AccentGreen,
+                        modifier = Modifier
+                            .clickable { showPrivacyTermsDialog = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .testTag("login_privacy_terms_link")
+                    )
                 }
             }
         }
@@ -734,5 +778,12 @@ fun LoginScreen(
                 }
             }
         }
+    }
+
+    if (showPrivacyTermsDialog) {
+        com.example.ui.components.PrivacyPolicyAndTermsDialog(
+            onDismiss = { showPrivacyTermsDialog = false },
+            isDark = false
+        )
     }
 }

@@ -56,7 +56,6 @@ class FirestoreSyncManager(
 
     private val pendingCount = AtomicInteger(0)
 
-    private var itemsListener: ListenerRegistration? = null
     private var rateItemsListener: ListenerRegistration? = null
     private var categoriesListener: ListenerRegistration? = null
     private var settingsListener: ListenerRegistration? = null
@@ -515,7 +514,9 @@ fun pushBusinessDetails() {
                 invoiceRef = doc.getString("invoiceRef") ?: "",
                 paymentMethod = doc.getString("paymentMethod") ?: "CASH",
                 status = doc.getString("status") ?: "COMPLETED",
-                lastUpdated = updated
+                lastUpdated = updated,
+                isMerged = doc.getBoolean("isMerged") ?: (doc.getString("paymentMethod")?.equals("MERGED", ignoreCase = true) == true),
+                mergedChildrenJson = doc.getString("mergedChildrenJson") ?: "[]"
             )
         }.associateBy { it.id }
 
@@ -546,27 +547,7 @@ fun pushBusinessDetails() {
             for (chunk in toPush.chunked(400)) {
                 val batch = firestore.batch()
                 for (t in chunk) {
-                    val isoDate = com.example.ui.Formatters.toLocalDateTimeString(t.date)
-                    val safeQuantity = if (t.quantity.isNaN() || t.quantity.isInfinite()) 0.0 else t.quantity
-                    val safeRate = if (t.rate.isNaN() || t.rate.isInfinite()) 0.0 else t.rate
-                    val safeSubtotal = if (t.subtotal.isNaN() || t.subtotal.isInfinite()) 0.0 else t.subtotal
-                    val map = hashMapOf<String, Any>(
-                        "id" to t.id,
-                        "customerId" to t.customerId,
-                        "amount" to t.amount,
-                        "type" to t.type,
-                        "description" to t.description,
-                        "date" to t.date,
-                        "dateIso" to isoDate,
-                        "serverTimestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
-                        "invoiceRef" to t.invoiceRef,
-                        "paymentMethod" to t.paymentMethod,
-                        "status" to t.status,
-                        "last_updated" to t.lastUpdated,
-                        "quantity" to safeQuantity,
-                        "rate" to safeRate,
-                        "subtotal" to safeSubtotal
-                    )
+                    val map = buildTransactionFirestoreMap(t)
                     batch.set(collection.document(t.id), map, SetOptions.merge())
                     if (t.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = t.lastUpdated
                 }
@@ -686,26 +667,18 @@ fun pushBusinessDetails() {
 
     private suspend fun syncRateItems(firestore: FirebaseFirestore, uid: String): Int {
         val colKey = "rate_items"
-        val itemsCol = firestore.collection("users").document(uid).collection("items")
         val rateItemsCol = firestore.collection("users").document(uid).collection("rate_items")
         val localList = dao.getAllRateItemsList()
         val localMap = localList.associateBy { it.id }
         val watermark = if (localList.isEmpty()) 0L else prefs.getCollectionWatermark(colKey)
 
-        val itemsSnapshot = try {
-            FirebaseAuthManager.awaitTask {
-                if (watermark > 0L) itemsCol.whereGreaterThan("last_updated", watermark).get() else itemsCol.get()
-            }
-        } catch (_: Exception) { null }
         val rateItemsSnapshot = try {
             FirebaseAuthManager.awaitTask {
                 if (watermark > 0L) rateItemsCol.whereGreaterThan("last_updated", watermark).get() else rateItemsCol.get()
             }
         } catch (_: Exception) { null }
 
-        val allDocs = mutableListOf<com.google.firebase.firestore.DocumentSnapshot>()
-        itemsSnapshot?.documents?.let { allDocs.addAll(it) }
-        rateItemsSnapshot?.documents?.let { allDocs.addAll(it) }
+        val allDocs = rateItemsSnapshot?.documents ?: emptyList()
 
         var maxSeenTimestamp = watermark
         val remoteMap = allDocs.mapNotNull { doc ->
@@ -738,7 +711,7 @@ fun pushBusinessDetails() {
 
         var pushed = 0
         for (local in toPush) {
-            pushRateItemToFirestore(itemsCol, rateItemsCol, local)
+            pushRateItemToFirestore(rateItemsCol, local)
             prefs.clearRecordDirty(colKey, local.id)
             if (local.lastUpdated > maxSeenTimestamp) maxSeenTimestamp = local.lastUpdated
             pushed++
@@ -754,21 +727,7 @@ fun pushBusinessDetails() {
         val firestore = getFirestore() ?: return
 
         try {
-            // Real-time snapshot stream on primary "items" collection
-            val itemsCol = firestore.collection("users").document(uid).collection("items")
-            itemsListener = itemsCol.addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.w(TAG, "Items snapshot stream notice: ${error.message}")
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    syncScope.launch {
-                        handleItemsSnapshot(snapshot)
-                    }
-                }
-            }
-
-            // Real-time snapshot stream on secondary "rate_items" collection
+            // Real-time snapshot stream on canonical "rate_items" collection
             val rateItemsCol = firestore.collection("users").document(uid).collection("rate_items")
             rateItemsListener = rateItemsCol.addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -834,13 +793,11 @@ fun pushBusinessDetails() {
 
     fun stopRealtimeSnapshotStreams() {
         try {
-            itemsListener?.remove()
             rateItemsListener?.remove()
             categoriesListener?.remove()
             settingsListener?.remove()
             notesListener?.remove()
         } catch (_: Exception) {}
-        itemsListener = null
         rateItemsListener = null
         categoriesListener = null
         settingsListener = null
@@ -1072,6 +1029,52 @@ fun pushBusinessDetails() {
         }
     }
 
+    /**
+     * Atomically deletes [deleteIds] and upserts [insertTxns] in a single Firestore WriteBatch
+     * (or chunked batches if > 450 ops) for merge/unmerge consistency.
+     */
+    fun replaceTransactionsBatch(
+        deleteIds: List<String>,
+        insertTxns: List<TransactionEntity>
+    ) {
+        deleteIds.forEach { prefs.clearRecordDirty("transactions", it) }
+        insertTxns.forEach { prefs.markRecordDirty("transactions", it.id) }
+        val user = authManager.currentUser.value ?: return
+        val firestore = getFirestore() ?: return
+        syncScope.launch {
+            try {
+                indicateSyncing()
+                val col = firestore.collection("users").document(user.uid).collection("transactions")
+                val ops = buildList<Pair<Boolean, Any>> {
+                    deleteIds.forEach { add(false to it) }
+                    insertTxns.forEach { add(true to it) }
+                }
+                for (chunk in ops.chunked(450)) {
+                    val batch = firestore.batch()
+                    for ((isInsert, item) in chunk) {
+                        if (isInsert) {
+                            val txn = item as TransactionEntity
+                            batch.set(col.document(txn.id), buildTransactionFirestoreMap(txn), SetOptions.merge())
+                        } else {
+                            val delId = item as String
+                            batch.delete(col.document(delId))
+                        }
+                    }
+                    FirebaseAuthManager.awaitTask { batch.commit() }
+                }
+                prefs.clearCollectionDirty("transactions", insertTxns.map { it.id })
+                val maxTs = insertTxns.maxOfOrNull { it.lastUpdated }
+                if (maxTs != null) {
+                    prefs.setCollectionWatermark("transactions", maxTs)
+                }
+                indicateSynced()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed atomic transaction batch replace: ${e.message}")
+                indicateOfflineOrFallback()
+            }
+        }
+    }
+
     fun pushRateItem(rateItem: RateItemEntity) {
         prefs.markRecordDirty("rate_items", rateItem.id)
         val user = authManager.currentUser.value ?: return
@@ -1079,9 +1082,8 @@ fun pushBusinessDetails() {
         syncScope.launch {
             try {
                 indicateSyncing()
-                val itemsCol = firestore.collection("users").document(user.uid).collection("items")
                 val rateItemsCol = firestore.collection("users").document(user.uid).collection("rate_items")
-                pushRateItemToFirestore(itemsCol, rateItemsCol, rateItem)
+                pushRateItemToFirestore(rateItemsCol, rateItem)
                 prefs.clearRecordDirty("rate_items", rateItem.id)
                 prefs.setCollectionWatermark("rate_items", rateItem.lastUpdated)
                 indicateSynced()
@@ -1104,9 +1106,7 @@ fun pushBusinessDetails() {
         syncScope.launch {
             try {
                 indicateSyncing()
-                val itemsDoc = firestore.collection("users").document(user.uid).collection("items").document(cleanId)
                 val rateItemsDoc = firestore.collection("users").document(user.uid).collection("rate_items").document(cleanId)
-                try { FirebaseAuthManager.awaitTask { itemsDoc.delete() } } catch (_: Exception) {}
                 try { FirebaseAuthManager.awaitTask { rateItemsDoc.delete() } } catch (_: Exception) {}
                 indicateSynced()
             } catch (e: Exception) {
@@ -1392,14 +1392,13 @@ fun pushBusinessDetails() {
         FirebaseAuthManager.awaitTask { col.document(c.id).set(map, SetOptions.merge()) }
     }
 
-    private suspend fun pushTransactionToFirestore(col: com.google.firebase.firestore.CollectionReference, t: TransactionEntity) {
+    private fun buildTransactionFirestoreMap(t: TransactionEntity): HashMap<String, Any> {
         val isoDate = com.example.ui.Formatters.toLocalDateTimeString(t.date)
-        
         val safeQuantity = if (t.quantity.isNaN() || t.quantity.isInfinite()) 0.0 else t.quantity
         val safeRate = if (t.rate.isNaN() || t.rate.isInfinite()) 0.0 else t.rate
         val safeSubtotal = if (t.subtotal.isNaN() || t.subtotal.isInfinite()) 0.0 else t.subtotal
-        
-        val map = hashMapOf<String, Any>(
+
+        return hashMapOf(
             "id" to t.id,
             "customerId" to t.customerId,
             "amount" to t.amount,
@@ -1414,34 +1413,33 @@ fun pushBusinessDetails() {
             "last_updated" to t.lastUpdated,
             "quantity" to safeQuantity,
             "rate" to safeRate,
-            "subtotal" to safeSubtotal
+            "subtotal" to safeSubtotal,
+            "isMerged" to t.isMerged,
+            "mergedChildrenJson" to t.mergedChildrenJson
         )
+    }
+
+    private suspend fun pushTransactionToFirestore(col: com.google.firebase.firestore.CollectionReference, t: TransactionEntity) {
+        val map = buildTransactionFirestoreMap(t)
         FirebaseAuthManager.awaitTask { col.document(t.id).set(map, SetOptions.merge()) }
     }
 
     private suspend fun pushRateItemToFirestore(
-        itemsCol: com.google.firebase.firestore.CollectionReference,
         rateItemsCol: com.google.firebase.firestore.CollectionReference,
         r: RateItemEntity
     ) {
         // Sanitize Document ID (Slash & Special Character Guard)
-        // NEVER use raw user-entered itemName or an ID containing slashes as a Firestore Document ID.
-        // Slashes trick Firestore into writing to a subcollection (e.g., items/Cloves/Laung) instead of a single document.
         val cleanDocId = if (r.id.isNotBlank() && !r.id.contains("/") && !r.id.contains("\\") && !r.id.contains(" ")) {
             r.id.replace("#", "_").replace("[", "_").replace("]", "_")
         } else {
-            // Generate clean random auto-ID using Firestore collection().document().id
-            itemsCol.document().id
+            rateItemsCol.document().id
         }
 
-        // If ID was sanitized or regenerated, update local room database so local and cloud match
         if (cleanDocId != r.id) {
             val updated = r.copy(id = cleanDocId)
             dao.deleteRateItem(r)
             dao.insertRateItem(updated)
         }
-
-        Log.d("VARIANT_TRACE", "Hop 2 - Firestore Payload: name='${r.name}', cleanDocId='$cleanDocId', hasMultipleVariants=${r.hasMultipleVariants}, variantsJson='${r.variantsJson}'")
 
         val map = hashMapOf<String, Any>(
             "id" to cleanDocId,
@@ -1465,13 +1463,7 @@ fun pushBusinessDetails() {
             "updatedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
         )
 
-        // Write safely to items collection (primary) and rate_items (secondary)
-        FirebaseAuthManager.awaitTask { itemsCol.document(cleanDocId).set(map, SetOptions.merge()) }
-        try {
-            FirebaseAuthManager.awaitTask { rateItemsCol.document(cleanDocId).set(map, SetOptions.merge()) }
-        } catch (e: Exception) {
-            Log.w(TAG, "Secondary rate_items sync notice: ${e.message}")
-        }
+        FirebaseAuthManager.awaitTask { rateItemsCol.document(cleanDocId).set(map, SetOptions.merge()) }
     }
 
     private suspend fun pushInvoiceToFirestore(col: com.google.firebase.firestore.CollectionReference, inv: InvoiceEntity) {
@@ -1566,26 +1558,20 @@ fun pushBusinessDetails() {
                 )
                 FirebaseAuthManager.awaitTask { col.document(newDocId).set(map, SetOptions.merge()) }
 
-                // Update all items in Firestore matching old category across both collections
-                val collectionsToUpdate = listOf(
-                    firestore.collection("users").document(user.uid).collection("items"),
-                    firestore.collection("users").document(user.uid).collection("rate_items")
-                )
-                for (colRef in collectionsToUpdate) {
-                    try {
-                        val snapshot = FirebaseAuthManager.awaitTask { colRef.whereEqualTo("category", oldName.trim()).get() }
-                        snapshot.documents.forEach { doc ->
-                            colRef.document(doc.id).update(
-                                mapOf(
-                                    "category" to newName.trim(),
-                                    "categoryName" to newName.trim(),
-                                    "last_updated" to System.currentTimeMillis()
-                                )
+                val colRef = firestore.collection("users").document(user.uid).collection("rate_items")
+                try {
+                    val snapshot = FirebaseAuthManager.awaitTask { colRef.whereEqualTo("category", oldName.trim()).get() }
+                    snapshot.documents.forEach { doc ->
+                        colRef.document(doc.id).update(
+                            mapOf(
+                                "category" to newName.trim(),
+                                "categoryName" to newName.trim(),
+                                "last_updated" to System.currentTimeMillis()
                             )
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Notice updating category in ${colRef.id}: ${e.message}")
+                        )
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Notice updating category in ${colRef.id}: ${e.message}")
                 }
                 indicateSynced()
             } catch (e: Exception) {
@@ -1609,6 +1595,53 @@ fun pushBusinessDetails() {
                 Log.w(TAG, "Delete category cloud notice: ${e.message}")
                 indicateOfflineOrFallback()
             }
+        }
+    }
+
+    suspend fun deleteAllUserCloudData(uid: String): Boolean = withContext(Dispatchers.IO) {
+        stopRealtimeSnapshotStreams()
+        val firestore = getFirestore() ?: return@withContext false
+        try {
+            val userDocRef = firestore.collection("users").document(uid)
+            val subcollections = listOf(
+                "customers",
+                "transactions",
+                "items",
+                "rate_items",
+                "categories",
+                "notes",
+                "invoices",
+                "settings"
+            )
+            for (sub in subcollections) {
+                val col = userDocRef.collection(sub)
+                val snapshot = FirebaseAuthManager.awaitTask { col.get() }
+                val docs = snapshot.documents
+                var idx = 0
+                while (idx < docs.size) {
+                    val batch = firestore.batch()
+                    val end = minOf(idx + 400, docs.size)
+                    for (i in idx until end) {
+                        batch.delete(docs[i].reference)
+                    }
+                    FirebaseAuthManager.awaitTask { batch.commit() }
+                    idx = end
+                }
+            }
+            try {
+                FirebaseAuthManager.awaitTask { userDocRef.delete() }
+            } catch (_: Exception) {}
+            prefs.resetAllSyncWatermarks()
+            _syncState.value = SyncUiState(
+                status = SyncStatus.NOT_AUTHENTICATED,
+                isOnline = isNetworkAvailable()
+            )
+            true
+        } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e(TAG, "Failed deleting user cloud data", e)
+            }
+            false
         }
     }
 

@@ -90,9 +90,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Path
 import com.example.ui.components.AnimatedPillSearchBar
 import com.example.ui.components.CloudSyncStatusBadge
-import com.example.ui.components.PriceTrendMiniBadge
 import com.example.ui.components.ScrollEdgeShadow
-import com.example.ui.components.computePriceTrend
 import com.example.ui.components.rememberCanScrollBack
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.graphics.StrokeCap
@@ -1615,7 +1613,6 @@ fun ItemRateListScreen(
                 viewModel.addRateCategory(catName, iconKey, iconUrl)
             },
             onSave = { name, category, unit, qty, buyRate, sellPriceStr, hasMultipleVariants, variants ->
-                android.util.Log.d("VARIANT_TRACE", "Hop 1 - Save Handler BEFORE save: name='$name', hasMultipleVariants=$hasMultipleVariants, variantsCount=${variants.size}, variants=${variants.map { "${it.label}(buy=${it.buyRate},sell=${it.sellPriceStr})" }}")
                 val cleanSell = sellPriceStr.replace("₹", "").replace("$", "").trim()
                 val sellPriceNum = if (cleanSell.contains("-")) {
                     cleanSell.split("-").firstOrNull()?.trim()?.toDoubleOrNull() ?: 0.0
@@ -2198,44 +2195,28 @@ fun RateItemCard(
                         )
                     }
 
-                    val priceTrend = remember(item.id, item.priceHistoryJson, item.variantsJson) {
-                        computePriceTrend(item)
-                    }
-
-                    // 1. ITEM NAME + Canvas Price-Trend Mini Badge (Left aligned)
-                    Column(
+                    // 1. ITEM NAME (Left aligned)
+                    Row(
                         modifier = Modifier.weight(1.5f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        Text(
+                            text = item.name,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = if (isCompactView) 13.5.sp else 15.sp
+                            ),
+                            fontWeight = FontWeight.Medium,
+                            color = if (isDark) Color.White else Color(0xFF1C1C1E),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (isCompactView && item.category.isNotBlank() && item.category != "General") {
                             Text(
-                                text = item.name,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = if (isCompactView) 13.5.sp else 15.sp
-                                ),
-                                fontWeight = FontWeight.Medium,
-                                color = if (isDark) Color.White else Color(0xFF1C1C1E),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (isCompactView && item.category.isNotBlank() && item.category != "General") {
-                                Text(
-                                    text = item.category.take(8),
-                                    fontSize = 9.sp,
-                                    color = Color(0xFF8E8E93),
-                                    maxLines = 1
-                                )
-                            }
-                        }
-
-                        if (!isCompactView && priceTrend != null) {
-                            PriceTrendMiniBadge(
-                                trend = priceTrend,
-                                currencySymbol = currencySymbol,
-                                modifier = Modifier.testTag("price_trend_badge_${item.id}")
+                                text = item.category.take(8),
+                                fontSize = 9.sp,
+                                color = Color(0xFF8E8E93),
+                                maxLines = 1
                             )
                         }
                     }
@@ -4248,8 +4229,6 @@ fun PriceHistorySheet(
     val context = LocalContext.current
     val variants = remember(item) { item.getVariants() }
     val isMultiVariant = item.hasVariants()
-
-    android.util.Log.d("VARIANT_TRACE", "Hop 6 - Item Detail Modal: item='${item.name}', isMultiVariant=$isMultiVariant, variantsSize=${variants.size}, selectedVariantId='$initialVariantId'")
 
     var selectedVariantId by rememberSaveable(item.id, initialVariantId) {
         mutableStateOf(

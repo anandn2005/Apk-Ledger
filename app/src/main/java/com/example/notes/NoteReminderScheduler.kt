@@ -192,6 +192,14 @@ class NoteReminderReceiver : BroadcastReceiver() {
 
 class NoteBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
+        val allowedActions = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            "android.intent.action.QUICKBOOT_POWERON",
+            Intent.ACTION_MY_PACKAGE_REPLACED
+        )
+        if (action !in allowedActions) return
+
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

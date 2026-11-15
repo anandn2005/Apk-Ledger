@@ -220,5 +220,35 @@ interface LedgerDao {
 
     @Query("UPDATE notes SET linkedCustomerId = '', linkedCustomerName = '', updatedAt = :timestamp WHERE linkedCustomerId IN (:customerIds)")
     suspend fun unlinkCustomersFromNotes(customerIds: List<String>, timestamp: Long)
+
+    // --- FULL LOCAL WIPE (ACCOUNT / DATA DELETION) ---
+    @Query("DELETE FROM customers")
+    suspend fun clearAllCustomers()
+
+    @Query("DELETE FROM transactions")
+    suspend fun clearAllTransactions()
+
+    @Query("DELETE FROM invoices")
+    suspend fun clearAllInvoices()
+
+    @Query("DELETE FROM rate_items")
+    suspend fun clearAllRateItems()
+
+    @Query("DELETE FROM price_history")
+    suspend fun clearAllPriceHistories()
+
+    @Query("DELETE FROM notes")
+    suspend fun clearAllNotes()
+
+    @Transaction
+    suspend fun clearAllLocalTables() {
+        clearAllTransactions()
+        clearAllInvoices()
+        clearAllCustomers()
+        clearAllPriceHistories()
+        clearAllRateItems()
+        clearAllNotes()
+        clearAllAuditLogs()
+    }
 }
 

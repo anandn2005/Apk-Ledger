@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.auth.configureAppCheck(this, intent)
         window.decorView.setBackgroundColor(android.graphics.Color.parseColor("#FAFCF9"))
         enableEdgeToEdge()
         pendingShortcutAction = intent?.action
@@ -175,9 +176,12 @@ fun LedgerApp(
     val navController = rememberNavController()
 
     LaunchedEffect(pendingNoteIdToOpen) {
-        if (!pendingNoteIdToOpen.isNullOrBlank()) {
-            targetNoteIdForEditor = pendingNoteIdToOpen
-            showNotesSheet = true
+        val requestedId = pendingNoteIdToOpen
+        if (!requestedId.isNullOrBlank()) {
+            if (viewModel.noteExists(requestedId)) {
+                targetNoteIdForEditor = requestedId
+                showNotesSheet = true
+            }
             onClearPendingNoteId()
         }
     }
@@ -236,6 +240,8 @@ fun LedgerApp(
             onVerifyPin = { pin -> viewModel.verifyPasscode(pin) },
             isBiometricEnabled = appPrefs.isBiometricEnabled,
             onBiometricSuccess = { viewModel.unlockWithBiometric() },
+            isLockedOut = state.isLockedOut,
+            getRemainingLockoutSeconds = { viewModel.getPinLockoutRemainingSeconds() },
             title = "Enter PIN",
             subtitle = if (appPrefs.isBiometricEnabled) "Enter 4-digit PIN or use Biometric Unlock" else ""
         )
@@ -342,14 +348,15 @@ fun LedgerApp(
                                     onUpdateCustomer = { cust -> viewModel.updateCustomer(cust) },
                                     onDeleteCustomer = { id -> viewModel.deleteCustomer(id) },
                                     onDeleteSelectedTransactions = { txns -> viewModel.deleteSelectedTransactions(txns) },
-                                    onMergeTransactions = { custId, txnsToMerge, combineSingleNet, desc, mergeDateTs ->
+                                    onMergeTransactions = { custId, txnsToMerge, desc ->
                                         viewModel.mergeCustomerTransactions(
                                             customerId = custId,
                                             transactionsToMerge = txnsToMerge,
-                                            combineIntoSingleNetEntry = combineSingleNet,
-                                            customDescription = desc,
-                                            mergeDateTimestamp = mergeDateTs
+                                            customDescription = desc
                                         )
+                                    },
+                                    onUnmergeTransaction = { txn ->
+                                        viewModel.unmergeCustomerTransaction(txn)
                                     },
                                     sharedTransitionScope = customerSharedScope,
                                     animatedVisibilityScope = customerAnimatedScope
@@ -477,7 +484,9 @@ fun LedgerApp(
                                         onSetCategoryIcon = { cat, iconKey -> viewModel.setCategoryIcon(cat, iconKey) },
                                         onShowMessage = { msg -> viewModel.showUserMessage(msg) },
                                         onImportBackupData = { jsonStr -> viewModel.importBackupData(jsonStr) {} },
-                                        onExportJson = { viewModel.getExportJson() }
+                                        onExportJson = { viewModel.getExportJson() },
+                                        onVerifyCurrentPin = { pin -> viewModel.verifyCurrentPasscodeOnly(pin) },
+                                        onDeleteAccountAndData = { onComplete -> viewModel.deleteAccountAndData(onComplete) }
                                     )
                                 }
                             }

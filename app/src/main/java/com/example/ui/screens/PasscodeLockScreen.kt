@@ -32,12 +32,30 @@ fun PasscodeLockScreen(
     onVerifyPin: (String) -> Boolean,
     isBiometricEnabled: Boolean = false,
     onBiometricSuccess: () -> Unit = {},
+    isLockedOut: Boolean = false,
+    getRemainingLockoutSeconds: () -> Long = { 0L },
     title: String = "Enter PIN",
     subtitle: String = ""
 ) {
     val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var lockoutSecondsLeft by remember { mutableLongStateOf(getRemainingLockoutSeconds()) }
+
+    LaunchedEffect(isLockedOut, lockoutSecondsLeft) {
+        var remaining = getRemainingLockoutSeconds()
+        lockoutSecondsLeft = remaining
+        while (remaining > 0L) {
+            kotlinx.coroutines.delay(1000L)
+            remaining = getRemainingLockoutSeconds()
+            lockoutSecondsLeft = remaining
+        }
+        if (remaining == 0L && errorMessage?.startsWith("Too many failed attempts") == true) {
+            errorMessage = null
+        }
+    }
+
+    val effectiveLockedOut = isLockedOut || lockoutSecondsLeft > 0L
 
     val triggerBiometricUnlock = remember(context, isBiometricEnabled, onBiometricSuccess) {
         {
@@ -129,9 +147,14 @@ fun PasscodeLockScreen(
                 }
             }
 
-            if (errorMessage != null) {
+            val displayError = when {
+                lockoutSecondsLeft > 0L -> "Too many failed attempts. Try again in ${lockoutSecondsLeft}s."
+                else -> errorMessage
+            }
+
+            if (displayError != null) {
                 Text(
-                    text = errorMessage!!,
+                    text = displayError,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
@@ -168,17 +191,24 @@ fun PasscodeLockScreen(
                                                 triggerBiometricUnlock()
                                             }
                                             "DEL" -> {
-                                                if (pin.isNotEmpty()) pin = pin.dropLast(1)
-                                                errorMessage = null
+                                                if (!effectiveLockedOut && pin.isNotEmpty()) pin = pin.dropLast(1)
+                                                if (!effectiveLockedOut) errorMessage = null
                                             }
                                             else -> {
-                                                if (pin.length < 4) {
+                                                if (effectiveLockedOut) {
+                                                    lockoutSecondsLeft = getRemainingLockoutSeconds()
+                                                } else if (pin.length < 4) {
                                                     pin += key
                                                     errorMessage = null
                                                     if (pin.length == 4) {
                                                         val success = onVerifyPin(pin)
                                                         if (!success) {
-                                                            errorMessage = "Incorrect PIN."
+                                                            lockoutSecondsLeft = getRemainingLockoutSeconds()
+                                                            errorMessage = if (lockoutSecondsLeft > 0L) {
+                                                                "Too many failed attempts. Try again in ${lockoutSecondsLeft}s."
+                                                            } else {
+                                                                "Incorrect PIN."
+                                                            }
                                                             pin = ""
                                                         }
                                                     }

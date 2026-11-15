@@ -69,7 +69,7 @@ object StatementImageGenerator {
             context.startActivity(chooser)
 
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "statement_image")
         }
     }
 

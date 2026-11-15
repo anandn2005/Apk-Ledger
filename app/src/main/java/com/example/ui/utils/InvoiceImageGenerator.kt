@@ -91,7 +91,7 @@ object InvoiceImageGenerator {
                 currencySymbol = currencySymbol
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "invoice_image")
             createInvoiceBitmap(
                 invoice = invoice,
                 businessName = businessName,
@@ -137,7 +137,7 @@ object InvoiceImageGenerator {
             val chooser = Intent.createChooser(shareIntent, "Share Minimalist Receipt")
             context.startActivity(chooser)
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "invoice_image")
         }
     }
 
@@ -169,7 +169,7 @@ object InvoiceImageGenerator {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "invoice_image")
         }
 
         if (items.isEmpty()) {

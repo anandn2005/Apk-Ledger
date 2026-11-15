@@ -335,8 +335,53 @@ class LedgerRepository(
                 )
             )
 
-            sourceIds.forEach { syncManager?.deleteTransaction(it) }
-            stampedCreated.forEach { syncManager?.pushTransaction(it) }
+            syncManager?.replaceTransactionsBatch(
+                deleteIds = sourceIds,
+                insertTxns = stampedCreated
+            )
+        }
+    }
+
+    suspend fun unmergeTransaction(parent: TransactionEntity): List<TransactionEntity> {
+        val children = parent.mergedChildren
+        if (children.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val restoredChildren = children.map {
+                it.copy(
+                    customerId = it.customerId.ifBlank { parent.customerId },
+                    lastUpdated = now,
+                    isMerged = false,
+                    mergedChildrenJson = "[]"
+                )
+            }
+
+            val summaryJson = JSONObject().apply {
+                put("type", "UNMERGE_TRANSACTION")
+                put("customerId", parent.customerId)
+                put("parentId", parent.id)
+                put("restoredCount", restoredChildren.size)
+            }.toString()
+
+            dao.replaceTransactions(
+                deleteIds = listOf(parent.id),
+                insertTxns = restoredChildren
+            )
+
+            dao.insertAuditLog(
+                AuditLogEntity(
+                    actionType = "UNMERGE_TRANSACTION",
+                    title = "Unmerged ${restoredChildren.size} entries",
+                    description = parent.description.ifBlank { "Restored ${restoredChildren.size} entries" },
+                    detailsJson = summaryJson
+                )
+            )
+
+            syncManager?.replaceTransactionsBatch(
+                deleteIds = listOf(parent.id),
+                insertTxns = restoredChildren
+            )
+            restoredChildren
         }
     }
 
@@ -354,8 +399,10 @@ class LedgerRepository(
                 insertTxns = restoredOriginals
             )
 
-            createdIds.forEach { syncManager?.deleteTransaction(it) }
-            restoredOriginals.forEach { syncManager?.pushTransaction(it) }
+            syncManager?.replaceTransactionsBatch(
+                deleteIds = createdIds,
+                insertTxns = restoredOriginals
+            )
         }
     }
 
@@ -478,7 +525,7 @@ class LedgerRepository(
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "appendPriceHistoryJson")
         }
         val latest = list.firstOrNull()
         val cleanSellStr = sellPriceStr.trim()
@@ -554,7 +601,7 @@ class LedgerRepository(
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "ensureStartingEntries")
             }
         }
     }
@@ -784,60 +831,80 @@ class LedgerRepository(
                 dao.updateAuditLog(log.copy(isRestored = true))
                 true
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "restoreAuditLog")
                 false
             }
         }
     }
 
+    suspend fun clearAllLocalData() {
+        withContext(Dispatchers.IO) {
+            dao.clearAllLocalTables()
+        }
+    }
+
     suspend fun importDataFromCsv(csvStr: String): Boolean {
         return withContext(Dispatchers.IO) {
+            if (csvStr.length > 10_000_000) return@withContext false
             try {
                 val backup = com.example.utils.ExportUtils.parseCompleteDatabaseCsv(csvStr)
                 if (backup.customers.isNotEmpty() || backup.transactions.isNotEmpty() || backup.invoices.isNotEmpty() || backup.rateItems.isNotEmpty()) {
                     val now = System.currentTimeMillis()
+                    val validTxnTypes = TransactionType.entries.map { it.name }.toSet()
+                    val validPartyTypes = setOf(CustomerEntity.PARTY_TYPE_CUSTOMER, CustomerEntity.PARTY_TYPE_SUPPLIER)
 
                     // 1. Deduplicate & import Customers
                     val existingCustomers = dao.getAllCustomersList()
                     val custNameMap = existingCustomers.associateBy { it.name.trim().lowercase(java.util.Locale.getDefault()) }
                     val custIdMap = existingCustomers.associateBy { it.id }
-                    backup.customers.forEach { incoming ->
-                        val existing = custIdMap[incoming.id] ?: custNameMap[incoming.name.trim().lowercase(java.util.Locale.getDefault())]
-                        if (existing != null) {
-                            dao.updateCustomer(incoming.copy(id = existing.id))
-                        } else {
-                            dao.insertCustomer(incoming)
+                    backup.customers
+                        .filter { it.name.isNotBlank() }
+                        .forEach { rawIncoming ->
+                            val incoming = rawIncoming.copy(
+                                partyType = if (rawIncoming.partyType in validPartyTypes) rawIncoming.partyType else CustomerEntity.PARTY_TYPE_CUSTOMER
+                            )
+                            val existing = custIdMap[incoming.id] ?: custNameMap[incoming.name.trim().lowercase(java.util.Locale.getDefault())]
+                            if (existing != null) {
+                                dao.updateCustomer(incoming.copy(id = existing.id))
+                            } else {
+                                dao.insertCustomer(incoming)
+                            }
                         }
-                    }
 
-                    // 2. Deduplicate & import Transactions
+                    // 2. Deduplicate & import validated Transactions
                     val existingTxns = dao.getAllTransactionsList()
                     val existingTxnIds = existingTxns.map { it.id }.toSet()
-                    backup.transactions.forEach { t ->
-                        if (!existingTxnIds.contains(t.id)) {
-                            dao.insertTransaction(t)
+                    backup.transactions
+                        .filter { it.customerId.isNotBlank() && it.amount.isFinite() && (it.amount > 0.0 || (it.isMerged && it.amount >= 0.0)) && it.type in validTxnTypes }
+                        .forEach { t ->
+                            if (!existingTxnIds.contains(t.id)) {
+                                dao.insertTransaction(t)
+                            }
                         }
-                    }
 
-                    // 3. Deduplicate & import Invoices
+                    // 3. Deduplicate & import validated Invoices
                     val existingInvoices = dao.getAllInvoicesList()
                     val invNumMap = existingInvoices.associateBy { it.invoiceNumber.trim() }
                     val invIdMap = existingInvoices.associateBy { it.id }
-                    backup.invoices.forEach { incoming ->
-                        val existing = invIdMap[incoming.id] ?: invNumMap[incoming.invoiceNumber.trim()]
-                        if (existing != null) {
-                            dao.updateInvoice(incoming.copy(id = existing.id))
-                        } else {
-                            dao.insertInvoice(incoming)
+                    backup.invoices
+                        .filter { it.customerId.isNotBlank() && it.totalAmount.isFinite() && it.totalAmount >= 0.0 && it.paidAmount.isFinite() && it.paidAmount >= 0.0 }
+                        .forEach { incoming ->
+                            val existing = invIdMap[incoming.id] ?: invNumMap[incoming.invoiceNumber.trim()]
+                            if (existing != null) {
+                                dao.updateInvoice(incoming.copy(id = existing.id))
+                            } else {
+                                dao.insertInvoice(incoming)
+                            }
                         }
-                    }
 
                     // 4. Deduplicate & import Rate Items with Price Revisions
                     val existingRates = dao.getAllRateItemsList()
                     val rateNameMap = existingRates.associateBy { it.name.trim().lowercase(java.util.Locale.getDefault()) }
                     val rateIdMap = existingRates.associateBy { it.id }
 
-                    backup.rateItems.forEach { incoming ->
+                    backup.rateItems
+                        .filter { it.name.isNotBlank() && it.qty.isFinite() && it.qty > 0.0 && it.buyRate.isFinite() && it.buyRate >= 0.0 && it.sellPrice.isFinite() && it.sellPrice >= 0.0 }
+                        .forEach { incoming ->
                         val existing = rateIdMap[incoming.id] ?: rateNameMap[incoming.name.trim().lowercase(java.util.Locale.getDefault())]
                         val (minP, maxP) = RateItemEntity.computeMinMax(incoming.sellPrice, incoming.sellPriceStr)
 
@@ -898,7 +965,7 @@ class LedgerRepository(
                     importDataFromJson(csvStr)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "importDataFromCsv")
                 importDataFromJson(csvStr)
             }
         }
@@ -938,6 +1005,9 @@ class LedgerRepository(
                 obj.put("date", t.date)
                 obj.put("invoiceRef", t.invoiceRef)
                 obj.put("paymentMethod", t.paymentMethod)
+                obj.put("status", t.status)
+                obj.put("isMerged", t.isMerged)
+                obj.put("mergedChildrenJson", t.mergedChildrenJson)
                 txnArray.put(obj)
             }
             root.put("transactions", txnArray)
@@ -1009,9 +1079,12 @@ class LedgerRepository(
 
     suspend fun importDataFromJson(jsonStr: String): Boolean {
         return withContext(Dispatchers.IO) {
+            if (jsonStr.length > 10_000_000) return@withContext false
             try {
                 val root = JSONObject(jsonStr)
                 val now = System.currentTimeMillis()
+                val validTxnTypes = TransactionType.entries.map { it.name }.toSet()
+                val validPartyTypes = setOf(CustomerEntity.PARTY_TYPE_CUSTOMER, CustomerEntity.PARTY_TYPE_SUPPLIER)
 
                 if (root.has("customers")) {
                     val existingCustomers = dao.getAllCustomersList()
@@ -1021,18 +1094,20 @@ class LedgerRepository(
                     val custArray = root.getJSONArray("customers")
                     for (i in 0 until custArray.length()) {
                         val obj = custArray.getJSONObject(i)
-                        val id = if (obj.has("id") && obj.getString("id").isNotBlank()) obj.getString("id") else UUID.randomUUID().toString()
-                        val name = obj.getString("name")
+                        val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                        val name = obj.optString("name", "").trim()
+                        if (name.isBlank()) continue
+                        val rawParty = obj.optString("partyType", CustomerEntity.PARTY_TYPE_CUSTOMER)
                         val incoming = CustomerEntity(
                             id = id,
                             name = name,
                             phone = obj.optString("phone", ""),
                             businessName = obj.optString("businessName", ""),
-                            partyType = obj.optString("partyType", CustomerEntity.PARTY_TYPE_CUSTOMER),
+                            partyType = if (rawParty in validPartyTypes) rawParty else CustomerEntity.PARTY_TYPE_CUSTOMER,
                             notes = obj.optString("notes", ""),
                             createdAt = obj.optLong("createdAt", now)
                         )
-                        val existing = custIdMap[id] ?: custNameMap[name.trim().lowercase(java.util.Locale.getDefault())]
+                        val existing = custIdMap[id] ?: custNameMap[name.lowercase(java.util.Locale.getDefault())]
                         if (existing != null) {
                             dao.updateCustomer(incoming.copy(id = existing.id))
                         } else {
@@ -1048,18 +1123,29 @@ class LedgerRepository(
                     val txnArray = root.getJSONArray("transactions")
                     for (i in 0 until txnArray.length()) {
                         val obj = txnArray.getJSONObject(i)
-                        val id = if (obj.has("id") && obj.getString("id").isNotBlank()) obj.getString("id") else UUID.randomUUID().toString()
+                        val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                        val customerId = obj.optString("customerId", "").trim()
+                        val amount = obj.optDouble("amount", Double.NaN)
+                        val type = obj.optString("type", "")
+                        val paymentMethod = obj.optString("paymentMethod", "CASH")
+                        val isMerged = obj.optBoolean("isMerged", paymentMethod.equals("MERGED", ignoreCase = true))
+                        if (customerId.isBlank() || !amount.isFinite() || (amount <= 0.0 && !(isMerged && amount >= 0.0)) || type !in validTxnTypes) {
+                            continue
+                        }
                         if (!existingTxnIds.contains(id)) {
                             dao.insertTransaction(
                                 TransactionEntity(
                                     id = id,
-                                    customerId = obj.getString("customerId"),
-                                    amount = obj.getDouble("amount"),
-                                    type = obj.getString("type"),
+                                    customerId = customerId,
+                                    amount = amount,
+                                    type = type,
                                     description = obj.optString("description", ""),
                                     date = obj.optLong("date", now),
                                     invoiceRef = obj.optString("invoiceRef", ""),
-                                    paymentMethod = obj.optString("paymentMethod", "CASH")
+                                    paymentMethod = paymentMethod,
+                                    status = obj.optString("status", "COMPLETED"),
+                                    isMerged = isMerged,
+                                    mergedChildrenJson = obj.optString("mergedChildrenJson", "[]")
                                 )
                             )
                         }
@@ -1074,26 +1160,36 @@ class LedgerRepository(
                     val invArray = root.getJSONArray("invoices")
                     for (i in 0 until invArray.length()) {
                         val obj = invArray.getJSONObject(i)
-                        val id = if (obj.has("id") && obj.getString("id").isNotBlank()) obj.getString("id") else UUID.randomUUID().toString()
-                        val invoiceNum = obj.getString("invoiceNumber")
+                        val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                        val invoiceNum = obj.optString("invoiceNumber", "").trim()
+                        val customerId = obj.optString("customerId", "").trim()
+                        val customerName = obj.optString("customerName", "").trim()
+                        val subtotal = obj.optDouble("subtotal", 0.0)
+                        val taxAmount = obj.optDouble("taxAmount", 0.0)
+                        val discountAmount = obj.optDouble("discountAmount", 0.0)
+                        val totalAmount = obj.optDouble("totalAmount", 0.0)
+                        val paidAmount = obj.optDouble("paidAmount", 0.0)
+                        if (customerId.isBlank() || !totalAmount.isFinite() || totalAmount < 0.0 || !paidAmount.isFinite() || paidAmount < 0.0) {
+                            continue
+                        }
                         val incoming = InvoiceEntity(
                             id = id,
                             invoiceNumber = invoiceNum,
-                            customerId = obj.getString("customerId"),
-                            customerName = obj.getString("customerName"),
+                            customerId = customerId,
+                            customerName = customerName,
                             issueDate = obj.optLong("issueDate", now),
                             dueDate = obj.optLong("dueDate", now + 864000000),
                             itemsJson = obj.optString("itemsJson", "[]"),
-                            subtotal = obj.optDouble("subtotal", 0.0),
-                            taxAmount = obj.optDouble("taxAmount", 0.0),
-                            discountAmount = obj.optDouble("discountAmount", 0.0),
-                            totalAmount = obj.optDouble("totalAmount", 0.0),
-                            paidAmount = obj.optDouble("paidAmount", 0.0),
+                            subtotal = if (subtotal.isFinite() && subtotal >= 0.0) subtotal else 0.0,
+                            taxAmount = if (taxAmount.isFinite() && taxAmount >= 0.0) taxAmount else 0.0,
+                            discountAmount = if (discountAmount.isFinite() && discountAmount >= 0.0) discountAmount else 0.0,
+                            totalAmount = totalAmount,
+                            paidAmount = paidAmount,
                             status = obj.optString("status", InvoiceEntity.STATUS_UNPAID),
                             notes = obj.optString("notes", ""),
                             imagePath = obj.optString("imagePath", "")
                         )
-                        val existing = invIdMap[id] ?: invNumMap[invoiceNum.trim()]
+                        val existing = invIdMap[id] ?: invNumMap[invoiceNum]
                         if (existing != null) {
                             dao.updateInvoice(incoming.copy(id = existing.id))
                         } else {
@@ -1110,15 +1206,19 @@ class LedgerRepository(
                     val rateArray = root.getJSONArray("rateItems")
                     for (i in 0 until rateArray.length()) {
                         val obj = rateArray.getJSONObject(i)
-                        val id = if (obj.has("id") && obj.getString("id").isNotBlank()) obj.getString("id") else UUID.randomUUID().toString()
-                        val name = obj.getString("name")
+                        val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                        val name = obj.optString("name", "").trim()
                         val sellPrice = obj.optDouble("sellPrice", 0.0)
                         val sellPriceStr = obj.optString("sellPriceStr", "")
                         val buyRate = obj.optDouble("buyRate", 0.0)
+                        val qty = obj.optDouble("qty", 1.0)
+                        if (name.isBlank() || !sellPrice.isFinite() || sellPrice < 0.0 || !buyRate.isFinite() || buyRate < 0.0 || !qty.isFinite() || qty <= 0.0) {
+                            continue
+                        }
                         val hasVars = obj.optBoolean("hasMultipleVariants", false)
                         val varsJson = obj.optString("variantsJson", "[]")
                         val (minP, maxP) = RateItemEntity.computeMinMax(sellPrice, sellPriceStr)
-                        val existing = rateIdMap[id] ?: rateNameMap[name.trim().lowercase(java.util.Locale.getDefault())]
+                        val existing = rateIdMap[id] ?: rateNameMap[name.lowercase(java.util.Locale.getDefault())]
 
                         if (existing != null) {
                             val updatedHistoryJson = appendPriceHistoryJson(
@@ -1222,7 +1322,7 @@ class LedgerRepository(
 
                 true
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "importDataFromJson")
                 false
             }
         }

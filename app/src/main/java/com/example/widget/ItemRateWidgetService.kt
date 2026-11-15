@@ -38,7 +38,7 @@ class ItemRateWidgetFactory(
             val prefs = AppPreferencesManager(context)
             currencySymbol = prefs.currencySymbol
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "widget_fetchData")
             items = emptyList()
         }
     }

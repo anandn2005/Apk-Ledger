@@ -12,7 +12,8 @@
 
     <application
         android:name=".LedgerApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -20,6 +21,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

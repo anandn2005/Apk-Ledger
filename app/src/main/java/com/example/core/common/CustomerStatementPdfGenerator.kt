@@ -150,6 +150,27 @@ object CustomerStatementPdfGenerator {
 
             y = drawTableHeader(canvas, y)
 
+            val childCellPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(107, 114, 128)
+                textSize = 8.5f
+            }
+            val childRedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(220, 38, 38)
+                textSize = 8.5f
+            }
+            val childGreenPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(5, 150, 105)
+                textSize = 8.5f
+            }
+            val childBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(249, 250, 251)
+                style = Paint.Style.FILL
+            }
+            val connectorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(209, 213, 219)
+                strokeWidth = 1f
+            }
+
             for ((txn, isSale, bal) in rows) {
                 if (y > pageHeight - 60f) {
                     pdfDocument.finishPage(page)
@@ -161,18 +182,34 @@ object CustomerStatementPdfGenerator {
                     y = drawTableHeader(canvas, y)
                 }
 
+                val isMerged = txn.isMergedParent()
+                val children = if (isMerged) txn.mergedChildren else emptyList()
                 val dateStr = Formatters.formatDate(txn.date)
-                val typeLabel = if (isSale) "Sale on credit" else "Payment received"
-                val desc = txn.description.ifBlank { typeLabel }.take(32)
+                val isZeroSettled = kotlin.math.abs(txn.amount) <= 0.005
+                val typeLabel = when {
+                    isZeroSettled -> "Settled"
+                    isSale -> "Sale on credit"
+                    else -> "Payment received"
+                }
+                val rawDesc = txn.description.ifBlank { typeLabel }
+                val desc = if (isMerged && children.isNotEmpty()) {
+                    "$rawDesc (${children.size} entries)".take(34)
+                } else {
+                    rawDesc.take(34)
+                }
                 canvas.drawText(dateStr, 46f, y, cellPaint)
-                canvas.drawText(desc, 120f, y, cellPaint)
+                canvas.drawText(desc, 120f, y, if (isMerged) boldPaint.apply { textSize = 10f } else cellPaint)
+                boldPaint.textSize = 11f
 
-                if (isSale) {
-                    canvas.drawText(Formatters.formatCurrency(txn.amount, currencySymbol), 330f, y, redPaint)
+                if (isZeroSettled) {
+                    canvas.drawText("-", 330f, y, cellPaint)
+                    canvas.drawText("-", 415f, y, cellPaint)
+                } else if (isSale) {
+                    canvas.drawText("− ${Formatters.formatCurrency(txn.amount, currencySymbol)}", 330f, y, redPaint)
                     canvas.drawText("-", 415f, y, cellPaint)
                 } else {
                     canvas.drawText("-", 330f, y, cellPaint)
-                    canvas.drawText(Formatters.formatCurrency(txn.amount, currencySymbol), 415f, y, greenPaint)
+                    canvas.drawText("+ ${Formatters.formatCurrency(txn.amount, currencySymbol)}", 415f, y, greenPaint)
                 }
 
                 val balText = Formatters.formatCurrency(kotlin.math.abs(bal), currencySymbol) +
@@ -180,6 +217,44 @@ object CustomerStatementPdfGenerator {
                 canvas.drawText(balText, 495f, y, if (bal > 0.005) greenPaint else cellPaint)
 
                 y += 8f
+
+                if (children.isNotEmpty()) {
+                    val sortedChildren = children.sortedBy { it.date }
+                    for (child in sortedChildren) {
+                        if (y > pageHeight - 50f) {
+                            pdfDocument.finishPage(page)
+                            pageNumber++
+                            pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                            page = pdfDocument.startPage(pageInfo)
+                            canvas = page.canvas
+                            y = 48f
+                            y = drawTableHeader(canvas, y)
+                        }
+                        canvas.drawRect(50f, y - 4f, (pageWidth - 40).toFloat(), y + 12f, childBgPaint)
+                        canvas.drawLine(56f, y - 4f, 56f, y + 12f, connectorPaint)
+                        y += 8f
+
+                        val childDate = "${Formatters.formatDate(child.date)} ${Formatters.formatTime(child.date)}"
+                        val childIsDebit = child.isDebitEntry()
+                        val childDesc = child.description.ifBlank {
+                            if (childIsDebit) "Sale on credit" else "Payment received"
+                        }.take(28)
+
+                        canvas.drawText(childDate, 62f, y, childCellPaint)
+                        canvas.drawText("↳ $childDesc", 168f, y, childCellPaint)
+
+                        if (childIsDebit) {
+                            canvas.drawText("− ${Formatters.formatCurrency(child.amount, currencySymbol)}", 330f, y, childRedPaint)
+                            canvas.drawText("", 415f, y, childCellPaint)
+                        } else {
+                            canvas.drawText("", 330f, y, childCellPaint)
+                            canvas.drawText("+ ${Formatters.formatCurrency(child.amount, currencySymbol)}", 415f, y, childGreenPaint)
+                        }
+                        y += 6f
+                    }
+                    y += 4f
+                }
+
                 canvas.drawLine(40f, y, (pageWidth - 40).toFloat(), y, linePaint)
                 y += 16f
             }

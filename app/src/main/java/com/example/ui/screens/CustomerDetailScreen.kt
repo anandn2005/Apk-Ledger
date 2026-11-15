@@ -60,11 +60,11 @@ import com.example.ui.theme.*
 import com.example.ui.utils.ReceiptData
 import com.example.ui.utils.ReceiptGenerator
 import com.example.ui.utils.StatementImageGenerator
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import java.text.SimpleDateFormat
-import java.util.Date
+import com.example.data.TransactionMergeHelper
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -89,10 +89,9 @@ fun CustomerDetailScreen(
     onMergeTransactions: (
         customerId: String,
         transactionsToMerge: List<TransactionEntity>,
-        combineIntoSingleNetEntry: Boolean,
-        customDescription: String,
-        mergeDateTimestamp: Long
-    ) -> Unit = { _, _, _, _, _ -> },
+        customDescription: String
+    ) -> Unit = { _, _, _ -> },
+    onUnmergeTransaction: (TransactionEntity) -> Unit = {},
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null
 ) {
@@ -103,9 +102,11 @@ fun CustomerDetailScreen(
 
     var showDeleteCustomerConfirmDialog by remember { mutableStateOf(false) }
     var showDeleteTxnsConfirmDialog by remember { mutableStateOf(false) }
+    var deletingMergedTxn by remember { mutableStateOf<TransactionEntity?>(null) }
     var showEditCustomerDialog by remember { mutableStateOf(false) }
     var editingTxn by remember { mutableStateOf<TransactionEntity?>(null) }
     var selectedTxnIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var expandedMergedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var previewReceiptData by remember { mutableStateOf<ReceiptData?>(null) }
     var mergeCandidates by remember { mutableStateOf<List<TransactionEntity>?>(null) }
     var mergeDefaultOldOnly by remember { mutableStateOf(false) }
@@ -707,50 +708,98 @@ fun CustomerDetailScreen(
                     items = transactions,
                     key = { it.id },
                     contentType = { txn ->
-                        if (txn.type == TransactionType.GAVE_CREDIT.name || txn.type == TransactionType.INVOICE_BILL.name) {
-                            "customer_txn_credit"
-                        } else {
-                            "customer_txn_payment"
+                        when {
+                            txn.isMergedParent() -> "customer_txn_merged"
+                            txn.type == TransactionType.GAVE_CREDIT.name || txn.type == TransactionType.INVOICE_BILL.name -> "customer_txn_credit"
+                            else -> "customer_txn_payment"
                         }
                     }
                 ) { txn ->
                     val isSelected = selectedTxnIds.contains(txn.id)
                     val assocInvoice = invoicesMap[txn.invoiceRef]
-                    SwipeableTransactionItemCard(
-                        txn = txn,
-                        currencySymbol = currencySymbol,
-                        isSelected = isSelected,
-                        onClick = {
-                            if (isSelectionMode) {
+                    if (txn.isMergedParent()) {
+                        val isExpanded = expandedMergedIds.contains(txn.id)
+                        MergedTransactionCard(
+                            txn = txn,
+                            currencySymbol = currencySymbol,
+                            isSelected = isSelected,
+                            isExpanded = isExpanded,
+                            onToggleExpand = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                expandedMergedIds = if (isExpanded) {
+                                    expandedMergedIds - txn.id
+                                } else {
+                                    expandedMergedIds + txn.id
+                                }
+                            },
+                            onClick = {
+                                if (isSelectionMode) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
+                                } else {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    expandedMergedIds = if (isExpanded) {
+                                        expandedMergedIds - txn.id
+                                    } else {
+                                        expandedMergedIds + txn.id
+                                    }
+                                }
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
-                            } else {
+                            },
+                            onEditNote = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                previewReceiptData = ReceiptGenerator.createReceiptData(
-                                    txn = txn,
-                                    customer = customer,
-                                    businessName = businessName,
-                                    businessAddress = businessAddress,
-                                    businessPhone = businessPhone,
-                                    upiId = upiId,
-                                    currencySymbol = currencySymbol,
-                                    associatedInvoice = assocInvoice
-                                )
+                                editingTxn = txn
+                            },
+                            onUnmerge = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                expandedMergedIds = expandedMergedIds - txn.id
+                                onUnmergeTransaction(txn)
+                            },
+                            onDelete = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                deletingMergedTxn = txn
                             }
-                        },
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
-                        },
-                        onEdit = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            editingTxn = txn
-                        },
-                        onDelete = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onDeleteTransaction(txn)
-                        }
-                    )
+                        )
+                    } else {
+                        SwipeableTransactionItemCard(
+                            txn = txn,
+                            currencySymbol = currencySymbol,
+                            isSelected = isSelected,
+                            onClick = {
+                                if (isSelectionMode) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
+                                } else {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    previewReceiptData = ReceiptGenerator.createReceiptData(
+                                        txn = txn,
+                                        customer = customer,
+                                        businessName = businessName,
+                                        businessAddress = businessAddress,
+                                        businessPhone = businessPhone,
+                                        upiId = upiId,
+                                        currencySymbol = currencySymbol,
+                                        associatedInvoice = assocInvoice
+                                    )
+                                }
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                selectedTxnIds = if (isSelected) selectedTxnIds - txn.id else selectedTxnIds + txn.id
+                            },
+                            onEdit = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                editingTxn = txn
+                            },
+                            onDelete = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onDeleteTransaction(txn)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -812,14 +861,25 @@ fun CustomerDetailScreen(
     }
 
     if (showDeleteTxnsConfirmDialog) {
+        val selectedList = transactions.filter { selectedTxnIds.contains(it.id) }
+        val underlyingCount = selectedList.sumOf {
+            if (it.isMergedParent() && it.mergedChildren.isNotEmpty()) it.mergedChildren.size else 1
+        }
         AlertDialog(
             onDismissRequest = { showDeleteTxnsConfirmDialog = false },
             title = { Text("Delete ${selectedTxnIds.size} Selected?") },
-            text = { Text("Selected items will be moved to trash.") },
+            text = {
+                Text(
+                    if (underlyingCount > selectedList.size) {
+                        "This will delete ${selectedList.size} selected item(s) including $underlyingCount underlying entries."
+                    } else {
+                        "Selected items will be deleted."
+                    }
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
-                        val selectedList = transactions.filter { selectedTxnIds.contains(it.id) }
                         onDeleteSelectedTransactions(selectedList)
                         selectedTxnIds = emptySet()
                         showDeleteTxnsConfirmDialog = false
@@ -831,6 +891,42 @@ fun CustomerDetailScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteTxnsConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    val mergedToDelete = deletingMergedTxn
+    if (mergedToDelete != null) {
+        val childCount = mergedToDelete.mergedChildren.size
+        AlertDialog(
+            onDismissRequest = { deletingMergedTxn = null },
+            title = { Text("Delete Merged Entry?") },
+            text = {
+                Text(
+                    if (childCount > 0) {
+                        "This will delete all $childCount underlying entries inside \"${mergedToDelete.description.ifBlank { "Merged Entry" }}\". You can also use Unmerge to restore them instead."
+                    } else {
+                        "Delete this merged entry?"
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteTransaction(mergedToDelete)
+                        expandedMergedIds = expandedMergedIds - mergedToDelete.id
+                        deletingMergedTxn = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DebitRed),
+                    modifier = Modifier.testTag("confirm_delete_merged_button")
+                ) {
+                    Text(if (childCount > 0) "Delete All ($childCount)" else "Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletingMergedTxn = null }) {
                     Text("Cancel")
                 }
             }
@@ -865,13 +961,11 @@ fun CustomerDetailScreen(
             initialOldOnly = mergeDefaultOldOnly,
             currencySymbol = currencySymbol,
             onDismiss = { mergeCandidates = null },
-            onConfirmMerge = { txnsToMerge, combineIntoSingleNet, description, mergeDateTs ->
+            onConfirmMerge = { txnsToMerge, description ->
                 onMergeTransactions(
                     customer.id,
                     txnsToMerge,
-                    combineIntoSingleNet,
-                    description,
-                    mergeDateTs
+                    description
                 )
                 selectedTxnIds = emptySet()
                 mergeCandidates = null
@@ -1160,6 +1254,470 @@ fun SwipeableTransactionItemCard(
         }
     }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MergedTransactionCard(
+    txn: TransactionEntity,
+    currencySymbol: String,
+    isSelected: Boolean,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onEditNote: () -> Unit,
+    onUnmerge: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val isDark = isAppInDarkTheme()
+    val children = remember(txn.mergedChildrenJson, txn.id) {
+        txn.mergedChildren.sortedBy { it.date }
+    }
+    val isZeroSettled = kotlin.math.abs(txn.amount) <= 0.005
+    val isNetDebit = !isZeroSettled && txn.isDebitEntry()
+    val showDueBadge = isNetDebit && txn.status != "PAID"
+    val neutralGray = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val accentColor = when {
+        isZeroSettled -> neutralGray
+        isNetDebit -> DebitRed
+        else -> CreditGreen
+    }
+    val accentBg = when {
+        isZeroSettled -> MaterialTheme.colorScheme.surfaceVariant
+        isNetDebit -> DebitRedLight
+        else -> CreditGreenLight
+    }
+    val amountDisplay = remember(txn.amount, currencySymbol, isZeroSettled, isNetDebit) {
+        when {
+            isZeroSettled -> "${currencySymbol}0"
+            isNetDebit -> "\u2212 ${Formatters.formatCurrency(txn.amount, currencySymbol)}"
+            else -> "+ ${Formatters.formatCurrency(txn.amount, currencySymbol)}"
+        }
+    }
+    val subtitleText = when {
+        isZeroSettled -> "Settled"
+        isNetDebit -> "Sale on credit"
+        else -> "Payment received"
+    }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 420f),
+        label = "MergedChevronRotation"
+    )
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+        ),
+        border = when {
+            isSelected -> BorderStroke(2.dp, PrimaryIndigo)
+            isDark -> BorderStroke(1.dp, DarkBorder)
+            else -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        },
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .shadow(
+                elevation = if (isSelected) 8.dp else 4.dp,
+                shape = RoundedCornerShape(20.dp),
+                ambientColor = Color(0x06000000),
+                spotColor = Color(0x0C000000)
+            )
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .testTag("merged_transaction_card_${txn.id}")
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Parent Header Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isSelected) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Check, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(accentBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CallMerge,
+                            contentDescription = "Merged Transaction",
+                            tint = accentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val titleText = txn.description.ifBlank {
+                        if (children.isNotEmpty()) {
+                            Formatters.formatMergedDateRange(children.first().date, children.last().date)
+                        } else {
+                            Formatters.formatMergedDateRange(txn.date, txn.date)
+                        }
+                    }
+                    Text(
+                        text = titleText,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val badgeLabel = if (children.isNotEmpty()) {
+                            "MERGED \u00B7 ${children.size} ${if (children.size == 1) "entry" else "entries"}"
+                        } else {
+                            "MERGED"
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CallMerge,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = badgeLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        if (showDueBadge) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFFFEF3C7)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(11.dp),
+                                        tint = Color(0xFFD97706)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "DUE",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFB45309)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Right Column: Signed Net Amount + Subtitle + Chevron & Actions
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = amountDisplay,
+                        style = MaterialTheme.typography.titleMedium.tabularNumbers(),
+                        fontWeight = FontWeight.ExtraBold,
+                        color = accentColor
+                    )
+
+                    Text(
+                        text = subtitleText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor
+                    )
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        Box {
+                            IconButton(
+                                onClick = { menuExpanded = true },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .testTag("merged_actions_menu_${txn.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = "Merged entry actions",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false }
+                            ) {
+                                if (children.isNotEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text("Unmerge (${children.size} entries)") },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.CallSplit,
+                                                contentDescription = null,
+                                                tint = StatusEmerald
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            onUnmerge()
+                                        },
+                                        modifier = Modifier.testTag("unmerge_menu_item_${txn.id}")
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Edit Note") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onEditNote()
+                                    },
+                                    modifier = Modifier.testTag("edit_note_menu_item_${txn.id}")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Delete", color = DebitRed) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = DebitRed
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        onDelete()
+                                    },
+                                    modifier = Modifier.testTag("delete_merged_menu_item_${txn.id}")
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onToggleExpand,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("merged_expand_chevron_${txn.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (isExpanded) "Collapse merged details" else "Expand merged details",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .rotate(chevronRotation)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Accordion Expandable Children List
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(
+                    animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+                ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+                exit = shrinkVertically(
+                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 150))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                ) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+
+                    if (children.isEmpty()) {
+                        Text(
+                            text = "Legacy merged summary — individual child entries were not stored separately.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min)
+                        ) {
+                            // Thin vertical connector line
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 10.dp, top = 4.dp, bottom = 4.dp)
+                                    .width(1.5.dp)
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.outlineVariant)
+                            )
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                children.forEach { child ->
+                                    MergedChildRow(
+                                        child = child,
+                                        currencySymbol = currencySymbol
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Quick Parent Actions Strip inside expanded view
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = onEditNote,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .testTag("expanded_edit_note_button_${txn.id}")
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Edit Note", fontSize = 11.5.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = onUnmerge,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CreditGreenDark),
+                                border = BorderStroke(1.dp, StatusEmerald.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .testTag("expanded_unmerge_button_${txn.id}")
+                            ) {
+                                Icon(Icons.Default.CallSplit, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Unmerge", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MergedChildRow(
+    child: TransactionEntity,
+    currencySymbol: String
+) {
+    val isChildDebit = child.isDebitEntry()
+    val childColor = if (isChildDebit) DebitRed else CreditGreen
+    val childAmountText = remember(child.amount, currencySymbol, isChildDebit) {
+        val prefix = if (isChildDebit) "\u2212 " else "+ "
+        prefix + Formatters.formatCurrency(child.amount, currencySymbol)
+    }
+    val childDateTime = remember(child.date) {
+        "${Formatters.formatDate(child.date)} \u2022 ${Formatters.formatTime(child.date)}"
+    }
+    val childLabel = child.description.ifBlank {
+        if (isChildDebit) "Sale on credit" else "Payment received"
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                text = childLabel,
+                style = MaterialTheme.typography.bodySmall,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = childDateTime,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Text(
+            text = childAmountText,
+            style = MaterialTheme.typography.bodySmall.tabularNumbers(),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = childColor
+        )
+    }
+}
+
 /**
  * Soft frosted circular action button replicating the subtle rounded icon containers from the reference design.
  */
@@ -1214,16 +1772,13 @@ private fun MergeTransactionsDialog(
     onDismiss: () -> Unit,
     onConfirmMerge: (
         txnsToMerge: List<TransactionEntity>,
-        combineIntoSingleNet: Boolean,
-        description: String,
-        mergeDateTs: Long
+        description: String
     ) -> Unit
 ) {
     val isDark = isAppInDarkTheme()
     val haptic = LocalHapticFeedback.current
     val thirtyDaysAgoMs = remember { System.currentTimeMillis() - (30L * 24L * 3600L * 1000L) }
 
-    // If opened from selection, keep user's selection as base pool; if opened from header pill, allow toggling 30d+ vs all
     val openedFromAllOrOld = initialCandidates.size == allCustomerTransactions.size ||
         (oldTransactionsCount >= 2 && initialOldOnly)
     var filterOldOnly by remember { mutableStateOf(initialOldOnly) }
@@ -1240,21 +1795,14 @@ private fun MergeTransactionsDialog(
     }
 
     val poolDebits = remember(basePool) {
-        basePool.filter { it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name }
+        basePool.filter { it.isDebitEntry() }
     }
     val poolCredits = remember(basePool) {
-        basePool.filter { it.type == TransactionType.GOT_PAYMENT.name }
+        basePool.filter { !it.isDebitEntry() }
     }
 
     var scopeFilter by remember(basePool) {
-        mutableStateOf(
-            when {
-                poolDebits.size >= 2 && poolCredits.size == 1 -> MergeScopeFilter.DEBITS_ONLY
-                poolDebits.size >= 2 && poolCredits.isEmpty() -> MergeScopeFilter.DEBITS_ONLY
-                poolCredits.size >= 2 && poolDebits.isEmpty() -> MergeScopeFilter.CREDITS_ONLY
-                else -> MergeScopeFilter.ALL_TYPES
-            }
-        )
+        mutableStateOf(MergeScopeFilter.ALL_TYPES)
     }
 
     val activeList = remember(basePool, poolDebits, poolCredits, scopeFilter) {
@@ -1265,54 +1813,13 @@ private fun MergeTransactionsDialog(
         }
     }
 
-    val activeDebits = remember(activeList) {
-        activeList.filter { it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name }
-    }
-    val activeCredits = remember(activeList) {
-        activeList.filter { it.type == TransactionType.GOT_PAYMENT.name }
-    }
-    val hasBothTypes = activeDebits.isNotEmpty() && activeCredits.isNotEmpty()
-
-    var combineSingleNet by remember(hasBothTypes, activeList.size) {
-        mutableStateOf(hasBothTypes && activeList.size == 2)
-    }
-    // Separate mode requires at least 3 rows when both types exist, otherwise 2 rows -> 2 rows saves 0 space
-    val canKeepSeparate = !hasBothTypes || activeList.size >= 3
-    val effectiveSingleNet = combineSingleNet || (hasBothTypes && !canKeepSeparate)
-
-    val debitSum = remember(activeDebits) { activeDebits.sumOf { it.amount } }
-    val creditSum = remember(activeCredits) { activeCredits.sumOf { it.amount } }
-    val netAmount = debitSum - creditSum
-
-    val resultingRowCount = remember(activeDebits.size, activeCredits.size, effectiveSingleNet) {
-        if (effectiveSingleNet) 1
-        else (if (activeDebits.isNotEmpty()) 1 else 0) + (if (activeCredits.isNotEmpty()) 1 else 0)
+    val preview = remember(activeList) {
+        TransactionMergeHelper.previewMerge(activeList)
     }
 
-    val dateSpanLabel = remember(activeList) {
-        if (activeList.isEmpty()) "" else {
-            val sdf = SimpleDateFormat("dd MMM", Locale.getDefault())
-            val minD = activeList.minOf { it.date }
-            val maxD = activeList.maxOf { it.date }
-            val s1 = sdf.format(Date(minD))
-            val s2 = sdf.format(Date(maxD))
-            if (s1 == s2) s1 else "$s1 – $s2"
-        }
-    }
-
-    val autoDescription = remember(activeDebits.size, activeCredits.size, dateSpanLabel) {
-        val parts = buildList {
-            if (activeDebits.isNotEmpty()) add("${activeDebits.size} debit${if (activeDebits.size > 1) "s" else ""}")
-            if (activeCredits.isNotEmpty()) add("${activeCredits.size} credit${if (activeCredits.size > 1) "s" else ""}")
-        }.joinToString(" & ")
-        if (dateSpanLabel.isNotBlank()) "Merged $parts ($dateSpanLabel)" else "Merged $parts"
-    }
-
+    val autoDescription = preview?.defaultTitle ?: ""
     var customDescription by remember(autoDescription) { mutableStateOf(autoDescription) }
-    val mergeTimestamp = remember(activeList) {
-        activeList.maxOfOrNull { it.date } ?: System.currentTimeMillis()
-    }
-    val isValidMerge = activeList.size >= 2 && resultingRowCount in 1 until activeList.size
+    val isValidMerge = activeList.size >= 2 && preview != null
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1335,7 +1842,6 @@ private fun MergeTransactionsDialog(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1361,12 +1867,12 @@ private fun MergeTransactionsDialog(
                         }
                         Column {
                             Text(
-                                text = "Merge Transactions",
+                                text = "Merge into Single Entry",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Compact older rows with exact balance",
+                                text = "All originals stay viewable inside the merged row",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1378,7 +1884,6 @@ private fun MergeTransactionsDialog(
                     }
                 }
 
-                // Optional 30+ Days Filter Toggle when opened from section header
                 if (openedFromAllOrOld && oldTransactionsCount >= 2 && allCustomerTransactions.size > oldTransactionsCount) {
                     Surface(
                         onClick = {
@@ -1422,63 +1927,11 @@ private fun MergeTransactionsDialog(
                     }
                 }
 
-                // Scope Chips (Debits Only / All / Credits Only)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "ENTRIES TO INCLUDE",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.7.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (poolDebits.size >= 2) {
-                            val selected = scopeFilter == MergeScopeFilter.DEBITS_ONLY
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    scopeFilter = MergeScopeFilter.DEBITS_ONLY
-                                },
-                                label = { Text("Debits (${poolDebits.size})", fontSize = 12.sp) },
-                                modifier = Modifier.testTag("merge_scope_debits")
-                            )
-                        }
-                        if (poolDebits.isNotEmpty() && poolCredits.isNotEmpty()) {
-                            val selected = scopeFilter == MergeScopeFilter.ALL_TYPES
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    scopeFilter = MergeScopeFilter.ALL_TYPES
-                                },
-                                label = { Text("Debits + Credits (${basePool.size})", fontSize = 12.sp) },
-                                modifier = Modifier.testTag("merge_scope_all")
-                            )
-                        }
-                        if (poolCredits.size >= 2) {
-                            val selected = scopeFilter == MergeScopeFilter.CREDITS_ONLY
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    scopeFilter = MergeScopeFilter.CREDITS_ONLY
-                                },
-                                label = { Text("Credits (${poolCredits.size})", fontSize = 12.sp) },
-                                modifier = Modifier.testTag("merge_scope_credits")
-                            )
-                        }
-                    }
-                }
-
-                // Output Mode (when both debits and credits are included)
-                if (hasBothTypes) {
+                // Scope Chips (All / Debits Only / Credits Only)
+                if (poolDebits.size >= 2 || poolCredits.size >= 2) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "MERGE FORMAT",
+                            text = "ENTRIES TO INCLUDE",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.7.sp,
@@ -1488,175 +1941,167 @@ private fun MergeTransactionsDialog(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            if (canKeepSeparate) {
-                                Surface(
-                                    onClick = { combineSingleNet = false },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (!effectiveSingleNet) StatusEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (!effectiveSingleNet) StatusEmerald else Color.Transparent
-                                    ),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text(
-                                            text = "Separate (2 rows)",
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (!effectiveSingleNet) CreditGreenDark else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = "1 Debit + 1 Credit",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
+                            FilterChip(
+                                selected = scopeFilter == MergeScopeFilter.ALL_TYPES,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    scopeFilter = MergeScopeFilter.ALL_TYPES
+                                },
+                                label = { Text("All (${basePool.size})", fontSize = 12.sp) },
+                                modifier = Modifier.testTag("merge_scope_all")
+                            )
+                            if (poolDebits.size >= 2) {
+                                FilterChip(
+                                    selected = scopeFilter == MergeScopeFilter.DEBITS_ONLY,
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        scopeFilter = MergeScopeFilter.DEBITS_ONLY
+                                    },
+                                    label = { Text("Debits (${poolDebits.size})", fontSize = 12.sp) },
+                                    modifier = Modifier.testTag("merge_scope_debits")
+                                )
                             }
-
-                            Surface(
-                                onClick = { combineSingleNet = true },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (effectiveSingleNet) StatusEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (effectiveSingleNet) StatusEmerald else Color.Transparent
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("merge_mode_single_net")
-                            ) {
-                                Column(modifier = Modifier.padding(10.dp)) {
-                                    Text(
-                                        text = "Single Net (1 row)",
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (effectiveSingleNet) CreditGreenDark else MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "Debits minus Credits",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            if (poolCredits.size >= 2) {
+                                FilterChip(
+                                    selected = scopeFilter == MergeScopeFilter.CREDITS_ONLY,
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        scopeFilter = MergeScopeFilter.CREDITS_ONLY
+                                    },
+                                    label = { Text("Credits (${poolCredits.size})", fontSize = 12.sp) },
+                                    modifier = Modifier.testTag("merge_scope_credits")
+                                )
                             }
                         }
                     }
                 }
 
                 // Live Before -> After Balance Preview Card
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (isDark) Color(0xFF141B17) else Color(0xFFF0FDF4),
-                    border = BorderStroke(1.dp, StatusEmerald.copy(alpha = 0.3f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                if (preview != null) {
+                    val flatCount = preview.flattenedChildren.size
+                    val netDisplayColor = when {
+                        preview.isSettled -> MaterialTheme.colorScheme.onSurfaceVariant
+                        preview.isNetDebit -> DebitRed
+                        else -> CreditGreen
+                    }
+                    val netDisplayText = when {
+                        preview.isSettled -> "${currencySymbol}0 (Settled)"
+                        preview.isNetDebit -> "\u2212 ${Formatters.formatCurrency(preview.absNetAmount, currencySymbol)} (Sale on credit)"
+                        else -> "+ ${Formatters.formatCurrency(preview.absNetAmount, currencySymbol)} (Payment received)"
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isDark) Color(0xFF141B17) else Color(0xFFF0FDF4),
+                        border = BorderStroke(1.dp, StatusEmerald.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "${activeList.size} entries → $resultingRowCount entry",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isDark) StatusEmerald else CreditGreenDark
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                color = StatusEmerald.copy(alpha = 0.16f)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                Text(
+                                    text = "$flatCount ${if (flatCount == 1) "entry" else "entries"} \u2192 1 entry",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isDark) StatusEmerald else CreditGreenDark
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = StatusEmerald.copy(alpha = 0.16f)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Verified,
-                                        contentDescription = null,
-                                        tint = StatusEmerald,
-                                        modifier = Modifier.size(12.dp)
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Verified,
+                                            contentDescription = null,
+                                            tint = StatusEmerald,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Text(
+                                            text = "Exact Balance",
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isDark) StatusEmerald else CreditGreenDark
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (preview.debitSum > 0.0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Debits total",
+                                        fontSize = 12.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Text(
-                                        text = "Exact Balance",
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isDark) StatusEmerald else CreditGreenDark
+                                        text = "\u2212 ${Formatters.formatCurrency(preview.debitSum, currencySymbol)}",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = DebitRed
                                     )
                                 }
                             }
-                        }
 
-                        if (activeDebits.isNotEmpty()) {
+                            if (preview.creditSum > 0.0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Credits total",
+                                        fontSize = 12.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "+ ${Formatters.formatCurrency(preview.creditSum, currencySymbol)}",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = CreditGreen
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(color = StatusEmerald.copy(alpha = 0.2f))
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Debits (${activeDebits.size})",
-                                    fontSize = 12.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "Net Total",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = Formatters.formatCurrency(debitSum, currencySymbol),
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = DebitRed
+                                    text = netDisplayText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = netDisplayColor
                                 )
                             }
-                        }
-
-                        if (activeCredits.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Credits (${activeCredits.size})",
-                                    fontSize = 12.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = Formatters.formatCurrency(creditSum, currencySymbol),
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = CreditGreen
-                                )
-                            }
-                        }
-
-                        HorizontalDivider(color = StatusEmerald.copy(alpha = 0.2f))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Net Impact",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${if (netAmount >= 0) "+" else "-"}${Formatters.formatCurrency(Math.abs(netAmount), currencySymbol)} ${if (netAmount > 0.005) "(Due)" else if (netAmount < -0.005) "(Credit)" else "(Settled)"}",
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (netAmount > 0.005) DebitRed else CreditGreen
-                            )
                         }
                     }
                 }
 
-                // Editable Summary Note
+                // Editable Label (defaults to formatted date range)
                 OutlinedTextField(
                     value = customDescription,
                     onValueChange = { customDescription = it },
-                    label = { Text("Summary Note") },
+                    label = { Text("Title / Date Range") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
@@ -1664,7 +2109,6 @@ private fun MergeTransactionsDialog(
                         .testTag("merge_summary_note_input")
                 )
 
-                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1682,9 +2126,7 @@ private fun MergeTransactionsDialog(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onConfirmMerge(
                                 activeList,
-                                effectiveSingleNet,
-                                customDescription,
-                                mergeTimestamp
+                                customDescription
                             )
                         },
                         enabled = isValidMerge,
@@ -1700,8 +2142,9 @@ private fun MergeTransactionsDialog(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
+                        val countLabel = preview?.flattenedChildren?.size ?: activeList.size
                         Text(
-                            text = "Merge (${activeList.size} → $resultingRowCount)",
+                            text = "Merge ($countLabel \u2192 1)",
                             fontWeight = FontWeight.Bold
                         )
                     }

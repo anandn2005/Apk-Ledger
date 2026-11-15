@@ -42,9 +42,21 @@ value class Money(val paise: Long) : Comparable<Money> {
 
 object MoneyMath {
 
-    private val indianFormatter: NumberFormat = NumberFormat.getNumberInstance(Locale("en", "IN")).apply {
-        minimumFractionDigits = 0
-        maximumFractionDigits = 2
+    internal fun formatIndianInteger(value: Long): String {
+        val str = value.toString()
+        if (str.length <= 3) return str
+        val lastThree = str.substring(str.length - 3)
+        val remaining = str.substring(0, str.length - 3)
+        val sb = StringBuilder()
+        var i = remaining.length
+        while (i > 0) {
+            val start = (i - 2).coerceAtLeast(0)
+            if (sb.isNotEmpty()) sb.insert(0, ',')
+            sb.insert(0, remaining.substring(start, i))
+            i = start
+        }
+        sb.append(',').append(lastThree)
+        return sb.toString()
     }
 
     fun fromRupeesDouble(rupees: Double): Money {
@@ -132,9 +144,7 @@ object MoneyMath {
         val cents = absPaise % 100L
 
         val prefix = if (isNegative) "-" else ""
-        val formattedRupees = synchronized(indianFormatter) {
-            indianFormatter.format(rupees)
-        }
+        val formattedRupees = formatIndianInteger(rupees)
 
         return if (cents == 0L) {
             "$prefix$currencySymbol$formattedRupees"

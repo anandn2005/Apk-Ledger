@@ -341,7 +341,7 @@ object ReceiptGenerator {
                 preferWhatsApp = preferWhatsApp
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "receipt_generator")
         }
     }
 
@@ -385,7 +385,7 @@ object ReceiptGenerator {
                 preferWhatsApp = preferWhatsApp
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "receipt_generator")
         }
     }
 

@@ -69,14 +69,93 @@ data class TransactionEntity(
     val description: String = "",
     val date: Long = System.currentTimeMillis(),
     val invoiceRef: String = "",
-    val paymentMethod: String = "CASH", // CASH, UPI, BANK_TRANSFER, CHEQUE
+    val paymentMethod: String = "CASH", // CASH, UPI, BANK_TRANSFER, CHEQUE, MERGED
     val status: String = "COMPLETED",
     val lastUpdated: Long = date,
     val quantity: Double = 1.0,
     val rate: Double = 0.0,
     val subtotal: Double = 0.0,
-    val dueDate: Long = 0L
-)
+    val dueDate: Long = 0L,
+    val isMerged: Boolean = false,
+    val mergedChildrenJson: String = "[]"
+) {
+    @delegate:androidx.room.Ignore
+    val mergedChildren: List<TransactionEntity> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        decodeMergedChildren(mergedChildrenJson, customerId)
+    }
+
+    @androidx.room.Ignore
+    fun isMergedParent(): Boolean = isMerged || paymentMethod.equals("MERGED", ignoreCase = true)
+
+    @androidx.room.Ignore
+    fun isDebitEntry(): Boolean =
+        type == TransactionType.GAVE_CREDIT.name || type == TransactionType.INVOICE_BILL.name
+
+    companion object {
+        fun encodeMergedChildren(children: List<TransactionEntity>): String {
+            if (children.isEmpty()) return "[]"
+            val arr = org.json.JSONArray()
+            for (child in children.sortedBy { it.date }) {
+                val obj = org.json.JSONObject()
+                obj.put("id", child.id)
+                obj.put("customerId", child.customerId)
+                obj.put("amount", child.amount)
+                obj.put("type", child.type)
+                obj.put("description", child.description)
+                obj.put("date", child.date)
+                obj.put("invoiceRef", child.invoiceRef)
+                obj.put("paymentMethod", if (child.paymentMethod.equals("MERGED", ignoreCase = true)) "CASH" else child.paymentMethod)
+                obj.put("status", child.status)
+                obj.put("lastUpdated", child.lastUpdated)
+                obj.put("quantity", child.quantity)
+                obj.put("rate", child.rate)
+                obj.put("subtotal", child.subtotal)
+                obj.put("dueDate", child.dueDate)
+                arr.put(obj)
+            }
+            return arr.toString()
+        }
+
+        fun decodeMergedChildren(json: String, fallbackCustomerId: String = ""): List<TransactionEntity> {
+            if (json.isBlank() || json == "[]") return emptyList()
+            return try {
+                val arr = org.json.JSONArray(json)
+                val list = ArrayList<TransactionEntity>(arr.length())
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id", "").ifBlank { UUID.randomUUID().toString() }
+                    val custId = obj.optString("customerId", fallbackCustomerId).ifBlank { fallbackCustomerId }
+                    val amount = obj.optDouble("amount", 0.0)
+                    val type = obj.optString("type", TransactionType.GAVE_CREDIT.name)
+                    val date = obj.optLong("date", System.currentTimeMillis())
+                    list.add(
+                        TransactionEntity(
+                            id = id,
+                            customerId = custId,
+                            amount = if (amount.isFinite()) amount else 0.0,
+                            type = type,
+                            description = obj.optString("description", ""),
+                            date = date,
+                            invoiceRef = obj.optString("invoiceRef", ""),
+                            paymentMethod = obj.optString("paymentMethod", "CASH"),
+                            status = obj.optString("status", "COMPLETED"),
+                            lastUpdated = obj.optLong("lastUpdated", date),
+                            quantity = obj.optDouble("quantity", 1.0).let { if (it.isFinite()) it else 1.0 },
+                            rate = obj.optDouble("rate", 0.0).let { if (it.isFinite()) it else 0.0 },
+                            subtotal = obj.optDouble("subtotal", 0.0).let { if (it.isFinite()) it else 0.0 },
+                            dueDate = obj.optLong("dueDate", 0L),
+                            isMerged = false,
+                            mergedChildrenJson = "[]"
+                        )
+                    )
+                }
+                list.sortedBy { it.date }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+}
 
 @Immutable
 data class InvoiceItem(

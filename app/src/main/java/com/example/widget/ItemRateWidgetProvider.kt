@@ -99,7 +99,7 @@ class ItemRateWidgetProvider : AppWidgetProvider() {
                     appWidgetManager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rate_list)
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "widget_notifyDataChanged")
             }
         }
     }

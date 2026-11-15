@@ -1152,6 +1152,7 @@ fun EditTransactionDialog(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    val isMergedParent = transaction.isMergedParent()
     var selectedType by remember { mutableStateOf(transaction.type) }
     var amountText by remember { mutableStateOf(transaction.amount.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() }) }
     var description by remember { mutableStateOf(transaction.description) }
@@ -1161,17 +1162,25 @@ fun EditTransactionDialog(
 
     if (isSubmitted) {
         LaunchedEffect(Unit) {
-            val amt = amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0
-            val parsedTs = Formatters.parseDate(dateText) ?: transaction.date
-            onConfirm(
-                transaction.copy(
-                    amount = amt,
-                    type = selectedType,
-                    description = description,
-                    paymentMethod = selectedMethod,
-                    date = parsedTs
+            if (isMergedParent) {
+                onConfirm(
+                    transaction.copy(
+                        description = description.trim()
+                    )
                 )
-            )
+            } else {
+                val amt = amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0
+                val parsedTs = Formatters.parseDate(dateText) ?: transaction.date
+                onConfirm(
+                    transaction.copy(
+                        amount = amt,
+                        type = selectedType,
+                        description = description,
+                        paymentMethod = selectedMethod,
+                        date = parsedTs
+                    )
+                )
+            }
             onDismiss()
         }
     }
@@ -1291,11 +1300,11 @@ fun EditTransactionDialog(
                                 onClick = {
                                     focusManager.clearFocus()
                                     keyboardController?.hide()
-                                    if ((amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0) > 0) {
+                                    if (isMergedParent || (amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0) > 0) {
                                         isSubmitted = true
                                     }
                                 },
-                                enabled = (amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0) > 0,
+                                enabled = isMergedParent || (amountText.replace("[^\\d.]".toRegex(), "").toDoubleOrNull() ?: 0.0) > 0,
                                 shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary,
@@ -1304,6 +1313,7 @@ fun EditTransactionDialog(
                                 modifier = Modifier
                                     .weight(1.3f)
                                     .height(52.dp)
+                                    .testTag("save_edit_transaction_button")
                             ) {
                                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -1323,6 +1333,65 @@ fun EditTransactionDialog(
                 ) {
                     if (isSubmitted) {
                         SuccessCheckmarkOverlay(title = "Transaction Updated!")
+                    } else if (isMergedParent) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Merged entry amount (${Formatters.formatCurrency(transaction.amount, currencySymbol)}) is locked to match its ${transaction.mergedChildren.size.coerceAtLeast(1)} underlying entries. Only the label can be edited.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+
+                        LedgerOutlinedTextField(
+                            value = amountText,
+                            onValueChange = {},
+                            enabled = false,
+                            readOnly = true,
+                            label = { Text("Net Amount ($currencySymbol) — Locked") },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("edit_txn_locked_amount"),
+                            shape = RoundedCornerShape(16.dp),
+                            singleLine = true
+                        )
+
+                        LedgerOutlinedTextField(
+                            value = description,
+                            onValueChange = { description = it },
+                            label = { Text("Note / Label") },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("edit_txn_description_input"),
+                            shape = RoundedCornerShape(16.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    isSubmitted = true
+                                }
+                            )
+                        )
                     } else {
                         // Type Selector (SALE / DEPOSIT)
                         Row(

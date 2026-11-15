@@ -100,7 +100,7 @@ dependencies {
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   // Firestore & Firebase Auth
-  implementation(libs.firebase.analytics)
+  // implementation(libs.firebase.analytics)
   // implementation(libs.firebase.crashlytics)
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
@@ -108,7 +108,8 @@ dependencies {
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
   // implementation(libs.play.services.auth)
-  implementation(libs.firebase.appcheck.recaptcha)
+  implementation(libs.firebase.appcheck.playintegrity)
+  debugImplementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   // implementation(libs.logging.interceptor)

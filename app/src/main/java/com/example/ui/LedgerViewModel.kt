@@ -183,8 +183,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     private val _selectedCustomerId = MutableStateFlow<String?>(null)
     private val _userMessage = MutableStateFlow<String?>(null)
     private val _isUnlocked = MutableStateFlow(!prefs.isPasscodeEnabled || prefs.isUnlocked)
-    private val _failedPinAttempts = MutableStateFlow(0)
-    private val _isLockedOut = MutableStateFlow(false)
+    private val _failedPinAttempts = MutableStateFlow(prefs.failedPinAttempts)
+    private val _isLockedOut = MutableStateFlow(prefs.isPinLockedOut())
     private val _pinnedCustomerIds = MutableStateFlow<Set<String>>(prefs.pinnedCustomerIds)
     private val _pinnedRateItemIds = MutableStateFlow<List<String>>(prefs.pinnedRateItemIds)
     private val _isPinnedItemsCollapsed = MutableStateFlow(prefs.isPinnedItemsCollapsed)
@@ -231,7 +231,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 val existingNotes = dao.getAllNotesList()
                 com.example.notes.NoteReminderScheduler.rescheduleAllFutureReminders(getApplication(), existingNotes)
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "vm_init_entries")
             }
         }
         // Auto check for existing Google login session on opening the app on IO thread
@@ -240,7 +240,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 authManager.attemptSilentSignIn()
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "vm_silent_sign_in")
             } finally {
                 _isCheckingAuth.value = false
             }
@@ -693,6 +693,63 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    suspend fun noteExists(noteId: String): Boolean {
+        return repository.getNoteById(noteId) != null
+    }
+
+    fun deleteAccountAndData(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val currentNotes = try { uiState.value.notes } catch (_: Exception) { emptyList() }
+            currentNotes.forEach { note ->
+                com.example.notes.NoteReminderScheduler.cancelReminder(getApplication(), note.id)
+            }
+
+            val uid = authManager.currentUser.value?.uid
+            if (uid != null) {
+                syncManager.deleteAllUserCloudData(uid)
+                when (val deleteRes = authManager.deleteCurrentUserAccount()) {
+                    is com.example.auth.DeleteAccountResult.Success -> {
+                        wipeLocalLedgerState()
+                        val msg = "Account and all cloud/local data permanently deleted"
+                        _userMessage.value = msg
+                        onComplete(true, msg)
+                    }
+                    is com.example.auth.DeleteAccountResult.RequiresRecentLogin -> {
+                        val msg = "Cloud records cleared. For security, please sign out and sign back in, then tap Delete Account once more to finish deleting your login."
+                        _userMessage.value = msg
+                        onComplete(false, msg)
+                    }
+                    is com.example.auth.DeleteAccountResult.Error -> {
+                        _userMessage.value = deleteRes.message
+                        onComplete(false, deleteRes.message)
+                    }
+                }
+            } else {
+                wipeLocalLedgerState()
+                val msg = "All local data permanently deleted"
+                _userMessage.value = msg
+                onComplete(true, msg)
+            }
+        }
+    }
+
+    private suspend fun wipeLocalLedgerState() {
+        repository.clearAllLocalData()
+        prefs.clearAllUserAndLedgerPrefs()
+        _pinnedCustomerIds.value = emptySet()
+        _pinnedRateItemIds.value = emptyList()
+        _isPinnedItemsCollapsed.value = false
+        _selectedCustomerId.value = null
+        _customCategories.value = prefs.customCategories
+        _categoryIconMap.value = emptyMap()
+        _availableUnits.value = AppPreferencesManager.defaultSystemUnits
+        _hiddenCategories.value = emptySet()
+        _customNoteLabels.value = emptyList()
+        _failedPinAttempts.value = 0
+        _isLockedOut.value = false
+        _isUnlocked.value = true
+    }
+
     fun triggerCloudSync() {
         viewModelScope.launch {
             val success = syncManager.performFullTwoWaySync()
@@ -1007,88 +1064,17 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     fun mergeCustomerTransactions(
         customerId: String,
         transactionsToMerge: List<TransactionEntity>,
-        combineIntoSingleNetEntry: Boolean,
-        customDescription: String,
-        mergeDateTimestamp: Long
+        customDescription: String = ""
     ) {
         if (transactionsToMerge.size < 2) return
+        val parent = com.example.data.TransactionMergeHelper.buildMergedParent(
+            customerId = customerId,
+            selected = transactionsToMerge,
+            customDescription = customDescription
+        ) ?: return
 
-        val debitTxns = transactionsToMerge.filter {
-            it.type == TransactionType.GAVE_CREDIT.name || it.type == TransactionType.INVOICE_BILL.name
-        }
-        val creditTxns = transactionsToMerge.filter {
-            it.type == TransactionType.GOT_PAYMENT.name
-        }
-        val debitSum = debitTxns.sumOf { it.amount }
-        val creditSum = creditTxns.sumOf { it.amount }
-        val baseDesc = customDescription.trim().ifBlank {
-            "Merged ${transactionsToMerge.size} entries"
-        }
-        val now = System.currentTimeMillis()
-        val effectiveDate = if (mergeDateTimestamp > 0L) mergeDateTimestamp else {
-            transactionsToMerge.maxOfOrNull { it.date } ?: now
-        }
-
-        val createdTransactions = buildList {
-            if (combineIntoSingleNetEntry) {
-                val net = debitSum - creditSum
-                val isNetDebit = net > 0.005
-                val isNetZero = kotlin.math.abs(net) <= 0.005
-                add(
-                    TransactionEntity(
-                        id = UUID.randomUUID().toString(),
-                        customerId = customerId,
-                        amount = if (isNetZero) 0.0 else kotlin.math.abs(net),
-                        type = if (isNetDebit) TransactionType.GAVE_CREDIT.name else TransactionType.GOT_PAYMENT.name,
-                        description = if (isNetZero) "$baseDesc (Settled)" else baseDesc,
-                        date = effectiveDate,
-                        invoiceRef = "",
-                        paymentMethod = "MERGED",
-                        status = if (isNetZero) "PAID" else "COMPLETED",
-                        lastUpdated = now
-                    )
-                )
-            } else {
-                val createsBoth = debitTxns.isNotEmpty() && creditTxns.isNotEmpty() && debitSum > 0.0 && creditSum > 0.0
-                if (debitTxns.isNotEmpty() && debitSum > 0.0) {
-                    add(
-                        TransactionEntity(
-                            id = UUID.randomUUID().toString(),
-                            customerId = customerId,
-                            amount = debitSum,
-                            type = TransactionType.GAVE_CREDIT.name,
-                            description = if (createsBoth) "$baseDesc (Debits ×${debitTxns.size})" else baseDesc,
-                            date = effectiveDate,
-                            invoiceRef = "",
-                            paymentMethod = "MERGED",
-                            status = "COMPLETED",
-                            lastUpdated = now
-                        )
-                    )
-                }
-                if (creditTxns.isNotEmpty() && creditSum > 0.0) {
-                    add(
-                        TransactionEntity(
-                            id = UUID.randomUUID().toString(),
-                            customerId = customerId,
-                            amount = creditSum,
-                            type = TransactionType.GOT_PAYMENT.name,
-                            description = if (createsBoth) "$baseDesc (Credits ×${creditTxns.size})" else baseDesc,
-                            date = effectiveDate - 1L,
-                            invoiceRef = "",
-                            paymentMethod = "MERGED",
-                            status = "COMPLETED",
-                            lastUpdated = now
-                        )
-                    )
-                }
-            }
-        }
-
-        if (createdTransactions.isEmpty() || createdTransactions.size >= transactionsToMerge.size) {
-            _userMessage.value = "Select at least 2 entries of the same type or use Single Net mode"
-            return
-        }
+        val flattenedCount = parent.mergedChildren.size
+        val createdTransactions = listOf(parent)
 
         lastDeletedSnapshot = DeletedRecordSnapshot.MergedTransactions(
             originalItems = transactionsToMerge,
@@ -1100,7 +1086,20 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceTransactions = transactionsToMerge,
                 createdTransactions = createdTransactions
             )
-            _userMessage.value = "Merged ${transactionsToMerge.size} entries into ${createdTransactions.size}"
+            _userMessage.value = "Merged $flattenedCount entries into 1"
+        }
+    }
+
+    fun unmergeCustomerTransaction(parent: TransactionEntity) {
+        if (parent.mergedChildren.isEmpty()) {
+            _userMessage.value = "Legacy merged entry has no stored child entries to restore"
+            return
+        }
+        viewModelScope.launch {
+            val restored = repository.unmergeTransaction(parent)
+            if (restored.isNotEmpty()) {
+                _userMessage.value = "Unmerged into ${restored.size} entries"
+            }
         }
     }
 
@@ -1271,27 +1270,55 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun verifyPasscode(pin: String): Boolean {
-        if (_isLockedOut.value) return false
+        if (prefs.isPinLockedOut()) {
+            _isLockedOut.value = true
+            _failedPinAttempts.value = prefs.failedPinAttempts
+            val secs = prefs.remainingPinLockoutSeconds()
+            _userMessage.value = "Too many failed attempts. Try again in ${secs}s."
+            return false
+        }
+        if (_isLockedOut.value) {
+            _isLockedOut.value = false
+            _failedPinAttempts.value = prefs.failedPinAttempts
+        }
 
         return if (prefs.verifyPasscodePin(pin)) {
+            prefs.resetPinLockout()
             prefs.isUnlocked = true
             _isUnlocked.value = true
             _failedPinAttempts.value = 0
+            _isLockedOut.value = false
             true
         } else {
-            val newAttempts = _failedPinAttempts.value + 1
+            val (newAttempts, lockoutSecs) = prefs.recordFailedPinAttempt()
             _failedPinAttempts.value = newAttempts
-            if (newAttempts >= 5) {
+            if (lockoutSecs > 0L) {
                 _isLockedOut.value = true
-                _userMessage.value = "Too many failed attempts. Temporary lockout active."
+                _userMessage.value = "Too many failed attempts. Try again in ${lockoutSecs}s."
             } else {
-                _userMessage.value = "Incorrect PIN. ${5 - newAttempts} attempt(s) remaining."
+                val remaining = (5 - newAttempts).coerceAtLeast(1)
+                _userMessage.value = "Incorrect PIN. $remaining attempt(s) remaining."
             }
             false
         }
     }
 
+    fun verifyCurrentPasscodeOnly(pin: String): Boolean {
+        return prefs.verifyPasscodePin(pin)
+    }
+
+    fun getPinLockoutRemainingSeconds(): Long {
+        val secs = prefs.remainingPinLockoutSeconds()
+        if (secs <= 0L && _isLockedOut.value) {
+            prefs.resetPinLockout()
+            _isLockedOut.value = false
+            _failedPinAttempts.value = 0
+        }
+        return secs
+    }
+
     fun unlockWithBiometric() {
+        prefs.resetPinLockout()
         prefs.isUnlocked = true
         _isUnlocked.value = true
         _failedPinAttempts.value = 0
@@ -1304,6 +1331,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         } else if (!enable) {
             prefs.setHashedPasscode("")
         }
+        prefs.resetPinLockout()
         prefs.isPasscodeEnabled = enable
         prefs.isUnlocked = true
         _isUnlocked.value = true
@@ -1451,8 +1479,6 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                     lastUpdated = System.currentTimeMillis()
                 )
 
-                android.util.Log.d("VARIANT_TRACE", "Hop 2 - Room Payload: name='$trimmedName', hasMultipleVariants=$hasMultipleVariants, variantsCount=${variants.size}, encodedVariants='$encodedVariants'")
-
                 repository.insertRateItem(newItem)
 
                 // Ensure category is registered in custom categories if new
@@ -1472,8 +1498,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 com.example.widget.ItemRateWidgetProvider.notifyDataChanged(getApplication())
                 _userMessage.value = "Added '$trimmedName' to ItemList"
             } catch (e: Exception) {
-                android.util.Log.e("LedgerViewModel", "Failed to add rate item", e)
-                _userMessage.value = "Failed to add item: ${e.localizedMessage ?: "Unknown error"}"
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "addRateItem")
+                _userMessage.value = "Failed to add item. Please check your input and try again."
             }
         }
     }
@@ -1656,8 +1682,8 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(chooser)
             } catch (e: Exception) {
-                e.printStackTrace()
-                _userMessage.value = "Failed to generate daily closing: ${e.message}"
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "shareDailyClosing")
+                _userMessage.value = "Failed to generate daily closing summary. Please try again."
             }
         }
     }

@@ -42,7 +42,7 @@ data class VectorIconItem(
     val fallbackVector: ImageVector
 ) {
     val svgUrl: String
-        get() = "https://cdn.jsdelivr.net/npm/lucide-static@latest/icons/$key.svg"
+        get() = "https://cdn.jsdelivr.net/npm/lucide-static@0.468.0/icons/$key.svg"
 }
 
 /**

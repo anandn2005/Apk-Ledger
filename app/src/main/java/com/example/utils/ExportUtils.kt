@@ -13,10 +13,15 @@ import java.util.*
 object ExportUtils {
 
     fun escapeCsv(value: String): String {
-        if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
-            return "\"" + value.replace("\"", "\"\"") + "\""
+        val sanitized = if (value.isNotEmpty() && value[0] in charArrayOf('=', '+', '-', '@', '\t', '\r')) {
+            "'$value"
+        } else {
+            value
         }
-        return value
+        if (sanitized.contains(",") || sanitized.contains("\"") || sanitized.contains("\n") || sanitized.contains("\r") || sanitized != value) {
+            return "\"" + sanitized.replace("\"", "\"\"") + "\""
+        }
+        return sanitized
     }
 
     fun parseCsvLine(line: String): List<String> {
@@ -68,7 +73,7 @@ object ExportUtils {
 
         // 2. TRANSACTIONS
         sb.append("\n# SECTION: TRANSACTIONS\n")
-        sb.append("id,customerId,amount,type,description,date,invoiceRef,paymentMethod,status\n")
+        sb.append("id,customerId,amount,type,description,date,invoiceRef,paymentMethod,status,isMerged,mergedChildrenJson\n")
         transactions.forEach { t ->
             sb.append(escapeCsv(t.id)).append(",")
             sb.append(escapeCsv(t.customerId)).append(",")
@@ -78,7 +83,9 @@ object ExportUtils {
             sb.append(t.date).append(",")
             sb.append(escapeCsv(t.invoiceRef)).append(",")
             sb.append(escapeCsv(t.paymentMethod)).append(",")
-            sb.append(escapeCsv(t.status)).append("\n")
+            sb.append(escapeCsv(t.status)).append(",")
+            sb.append(t.isMerged).append(",")
+            sb.append(escapeCsv(t.mergedChildrenJson)).append("\n")
         }
 
         // 3. INVOICES
@@ -182,6 +189,10 @@ object ExportUtils {
                             val customerId = cols.getOrNull(1) ?: ""
                             val amount = cols.getOrNull(2)?.toDoubleOrNull() ?: 0.0
                             val type = cols.getOrNull(3) ?: "GAVE_CREDIT"
+                            val paymentMethod = cols.getOrNull(7) ?: "CASH"
+                            val isMerged = cols.getOrNull(9)?.toBooleanStrictOrNull()
+                                ?: paymentMethod.equals("MERGED", ignoreCase = true)
+                            val mergedChildrenJson = cols.getOrNull(10)?.ifBlank { "[]" } ?: "[]"
                             transactions.add(
                                 TransactionEntity(
                                     id = id,
@@ -191,8 +202,10 @@ object ExportUtils {
                                     description = cols.getOrNull(4) ?: "",
                                     date = cols.getOrNull(5)?.toLongOrNull() ?: System.currentTimeMillis(),
                                     invoiceRef = cols.getOrNull(6) ?: "",
-                                    paymentMethod = cols.getOrNull(7) ?: "CASH",
-                                    status = cols.getOrNull(8) ?: "COMPLETED"
+                                    paymentMethod = paymentMethod,
+                                    status = cols.getOrNull(8) ?: "COMPLETED",
+                                    isMerged = isMerged,
+                                    mergedChildrenJson = mergedChildrenJson
                                 )
                             )
                         }
@@ -256,7 +269,7 @@ object ExportUtils {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "parseCompleteDatabaseCsv")
             }
         }
 
@@ -345,7 +358,7 @@ object ExportUtils {
             shareFile(context, file, mimeType, title)
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "shareBackupFile")
             false
         }
     }
@@ -361,18 +374,34 @@ object ExportUtils {
             }
             true
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "writeContentToUri")
             false
         }
     }
 
-    fun readTextFromUri(context: Context, uri: Uri): String? {
+    fun readTextFromUri(
+        context: Context,
+        uri: Uri,
+        maxBytes: Long = 10L * 1024L * 1024L
+    ): String? {
         return try {
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                InputStreamReader(inputStream, Charsets.UTF_8).readText()
+                val buffer = ByteArray(8192)
+                val out = java.io.ByteArrayOutputStream()
+                var totalRead = 0L
+                while (true) {
+                    val bytesRead = inputStream.read(buffer)
+                    if (bytesRead <= 0) break
+                    totalRead += bytesRead
+                    if (totalRead > maxBytes) {
+                        return null
+                    }
+                    out.write(buffer, 0, bytesRead)
+                }
+                out.toString(Charsets.UTF_8.name())
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            com.example.crashlytics.AppCrashlytics.recordNonFatal(e, "readTextFromUri")
             null
         }
     }
